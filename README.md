@@ -183,6 +183,27 @@ Suggested n8n HTTP Request body:
 
 Use preview first, then switch to commit mode once you trust the extraction.
 
+## Gmail token requirement for inbox processing
+
+`/workflows/process-inbox` uses the Gmail API adapter directly and requires a refreshable OAuth token file.
+
+Set in `.env`:
+
+```env
+PPMCP_GMAIL__CREDENTIALS_PATH=/config/secrets/google-oauth-client.json
+PPMCP_GMAIL__TOKEN_PATH=/config/secrets/gmail-token.json
+```
+
+Both files should exist on Unraid host under:
+
+```text
+/mnt/user/appdata/personal-productivity-mcp/secrets/
+```
+
+because that folder is mounted into the container as `/config/secrets`.
+
+If token is missing/expired and cannot refresh, inbox processing will fail with a clear runtime error.
+
 ## Quick start
 
 ```bash

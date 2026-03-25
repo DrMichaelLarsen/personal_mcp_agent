@@ -57,6 +57,7 @@ class NotionDatabaseConfig(BaseModel):
 
 class GmailConfig(BaseModel):
     credentials_path: str | None = None
+    token_path: str | None = None
     label_query: str = "label:Actionable -label:Processed"
     processed_label: str = "Processed"
 

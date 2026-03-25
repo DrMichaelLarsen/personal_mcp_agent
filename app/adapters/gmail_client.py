@@ -1,11 +1,134 @@
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 from app.schemas.email import EmailMessage
 
 
 class GmailClient:
+    SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+
+    def __init__(self, credentials_path: str | None = None, token_path: str | None = None):
+        self.credentials_path = credentials_path
+        self.token_path = token_path
+        self._service = None
+
+    def _get_service(self):
+        if self._service is not None:
+            return self._service
+        if not self.token_path:
+            raise RuntimeError("Gmail token path is not configured. Set PPMCP_GMAIL__TOKEN_PATH.")
+
+        token_file = Path(self.token_path)
+        if not token_file.exists():
+            raise RuntimeError(f"Gmail token file not found: {token_file}. Generate OAuth token first.")
+
+        creds = self._load_credentials(token_file)
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                self._save_credentials(token_file, creds)
+            else:
+                raise RuntimeError("Gmail credentials are invalid and cannot be refreshed. Re-run OAuth flow.")
+
+        self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        return self._service
+
+    def _load_credentials(self, token_file: Path) -> Credentials:
+        if token_file.suffix.lower() in {".pickle", ".pkl"}:
+            with token_file.open("rb") as fp:
+                creds = pickle.load(fp)
+            if not isinstance(creds, Credentials):
+                raise RuntimeError(f"Token file {token_file} does not contain valid Google Credentials.")
+            return creds
+        return Credentials.from_authorized_user_file(str(token_file), self.SCOPES)
+
+    def _save_credentials(self, token_file: Path, creds: Credentials) -> None:
+        if token_file.suffix.lower() in {".pickle", ".pkl"}:
+            with token_file.open("wb") as fp:
+                pickle.dump(creds, fp)
+            return
+        token_file.write_text(creds.to_json(), encoding="utf-8")
+
     def list_tagged_messages(self, query: str, max_count: int) -> list[EmailMessage]:
-        raise NotImplementedError("Implement Gmail query logic.")
+        service = self._get_service()
+        response = service.users().messages().list(userId="me", q=query, maxResults=max_count).execute()
+        messages = response.get("messages", [])
+        results: list[EmailMessage] = []
+        for msg in messages:
+            message_id = msg.get("id")
+            if not message_id:
+                continue
+            detail = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+            payload = detail.get("payload", {})
+            headers = payload.get("headers", [])
+            header_map = {header.get("name", "").lower(): header.get("value", "") for header in headers}
+            body_text = self._extract_text_body(payload)
+            results.append(
+                EmailMessage(
+                    id=detail.get("id", message_id),
+                    thread_id=detail.get("threadId", ""),
+                    subject=header_map.get("subject", "(no subject)"),
+                    sender=header_map.get("from", "unknown"),
+                    body=body_text,
+                    labels=detail.get("labelIds", []),
+                )
+            )
+        return results
 
     def mark_processed(self, email_id: str, processed_label: str) -> None:
-        raise NotImplementedError("Implement Gmail label update logic.")
+        service = self._get_service()
+        label_id = self._ensure_label(service, processed_label)
+        service.users().messages().modify(
+            userId="me",
+            id=email_id,
+            body={"addLabelIds": [label_id]},
+        ).execute()
+
+    def _ensure_label(self, service, label_name: str) -> str:
+        labels = service.users().labels().list(userId="me").execute().get("labels", [])
+        for label in labels:
+            if label.get("name") == label_name:
+                return label["id"]
+        created = service.users().labels().create(
+            userId="me",
+            body={
+                "name": label_name,
+                "labelListVisibility": "labelShow",
+                "messageListVisibility": "show",
+            },
+        ).execute()
+        return created["id"]
+
+    def _extract_text_body(self, payload: dict) -> str:
+        import base64
+
+        def _decode(data: str | None) -> str:
+            if not data:
+                return ""
+            padding = "=" * (-len(data) % 4)
+            return base64.urlsafe_b64decode((data + padding).encode("utf-8")).decode("utf-8", errors="replace")
+
+        body = payload.get("body", {})
+        body_data = body.get("data")
+        if body_data:
+            return _decode(body_data)
+
+        for part in payload.get("parts", []) or []:
+            mime_type = (part.get("mimeType") or "").lower()
+            part_body_data = (part.get("body") or {}).get("data")
+            if mime_type == "text/plain" and part_body_data:
+                return _decode(part_body_data)
+
+        for part in payload.get("parts", []) or []:
+            part_body_data = (part.get("body") or {}).get("data")
+            if part_body_data:
+                return _decode(part_body_data)
+
+        snippet = payload.get("snippet")
+        return snippet or ""
