@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-productivity-mcp"
+version = "0.1.0"
+description = "Schema-aware personal productivity MCP server and workflow engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+  "httpx>=0.27.0",
+  "langgraph>=0.2.0",
+  "mcp>=1.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0"
+]
+
+[tool.setuptools]
+packages = ["app", "app.mcp", "app.mcp.tools", "app.mcp.resources", "app.workflows", "app.workflows.plan_day", "app.workflows.process_emails", "app.services", "app.adapters", "app.schemas", "app.utils"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
