@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["app", "app.mcp", "app.mcp.tools", "app.mcp.resources", "app.workflows", "app.workflows.plan_day", "app.workflows.process_emails", "app.services", "app.adapters", "app.schemas", "app.utils"]
+packages = ["app", "app.mcp", "app.mcp.tools", "app.mcp.resources", "app.workflows", "app.workflows.plan_day", "app.workflows.process_emails", "app.services", "app.adapters", "app.schemas", "app.utils", "tests"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
