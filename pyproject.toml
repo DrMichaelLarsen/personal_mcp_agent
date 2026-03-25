@@ -24,8 +24,9 @@ dev = [
   "pytest-asyncio>=0.23.0"
 ]
 
-[tool.setuptools]
-packages = ["app", "app.mcp", "app.mcp.tools", "app.mcp.resources", "app.workflows", "app.workflows.plan_day", "app.workflows.process_emails", "app.services", "app.adapters", "app.schemas", "app.utils", "tests"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
