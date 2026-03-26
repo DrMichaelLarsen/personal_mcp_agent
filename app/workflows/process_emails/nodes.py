@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from urllib.parse import urlencode
 
 from app.schemas.calendar import EventCreateInput
@@ -90,6 +91,104 @@ def _build_calendar_template_link(
     if start and end:
         params["dates"] = f"{start.replace('-', '').replace(':', '')}/{end.replace('-', '').replace(':', '')}"
     return f"https://calendar.google.com/calendar/render?{urlencode(params)}"
+
+
+def _normalize_importance(value: int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    # Normalize common 1-5 LLM scoring into your productivity scale.
+    if 1 <= numeric <= 5:
+        return {1: 25, 2: 50, 3: 100, 4: 150, 5: 200}[numeric]
+    if 6 <= numeric <= 20:
+        return min(200, numeric * 10)
+    return max(0, min(300, numeric))
+
+
+def _infer_task_dates(email_body: str, analysis: EmailAnalysis) -> tuple[str | None, str | None]:
+    scheduled = analysis.suggested_scheduled
+    deadline = analysis.suggested_deadline
+
+    if analysis.event_start and not scheduled:
+        scheduled = analysis.event_start.split("T", 1)[0]
+    if analysis.event_end and not deadline:
+        deadline = analysis.event_end.split("T", 1)[0]
+
+    if scheduled and deadline:
+        return scheduled, deadline
+
+    body = (email_body or "").lower()
+    today = date.today()
+
+    if not scheduled:
+        if "tomorrow" in body:
+            scheduled = (today + timedelta(days=1)).isoformat()
+        elif "today" in body:
+            scheduled = today.isoformat()
+
+    explicit_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", email_body or "")
+    if explicit_dates:
+        if not deadline and re.search(r"\b(due|deadline|by)\b", body):
+            deadline = explicit_dates[0]
+        elif not scheduled:
+            scheduled = explicit_dates[0]
+
+    return scheduled, deadline
+
+
+def _infer_item_dates(text: str) -> tuple[str | None, str | None]:
+    body = (text or "").lower()
+    today = date.today()
+    scheduled = None
+    deadline = None
+    explicit_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", text or "")
+    if explicit_dates:
+        if re.search(r"\b(due|deadline|by)\b", body):
+            deadline = explicit_dates[0]
+        else:
+            scheduled = explicit_dates[0]
+    if not scheduled and "tomorrow" in body:
+        scheduled = (today + timedelta(days=1)).isoformat()
+    if not scheduled and "today" in body:
+        scheduled = today.isoformat()
+    if not deadline and re.search(r"\b(due|deadline|by)\b", body):
+        deadline = scheduled
+    return scheduled, deadline
+
+
+def _infer_contexts_for_item(text: str, fallback_contexts: list[str]) -> list[str]:
+    lower = (text or "").lower()
+    contexts: list[str] = []
+    if any(token in lower for token in ["call", "phone", "voicemail"]):
+        contexts.append("Phone")
+    if any(token in lower for token in ["email", "doc", "review", "spreadsheet", "submit", "send", "reply"]):
+        contexts.append("Computer")
+    if any(token in lower for token in ["home", "house", "errand", "pickup", "drop off", "store"]):
+        contexts.append("Home")
+    return contexts or list(fallback_contexts)
+
+
+def _should_split_into_subtasks(analysis: EmailAnalysis, parent_contexts: list[str]) -> bool:
+    items = [item.text.strip() for item in analysis.action_items if item.text and item.text.strip()]
+    if len(items) < 2:
+        return False
+    if all(re.match(r"^(step\s+\d+|\d+[\.)])", item.lower()) for item in items):
+        return False
+
+    deadline_values = {d for _, d in (_infer_item_dates(item) for item in items) if d}
+    if len(deadline_values) >= 2:
+        return True
+
+    per_item_context = {tuple(_infer_contexts_for_item(item, parent_contexts)) for item in items}
+    if len(per_item_context) >= 2:
+        return True
+
+    due_marked_count = sum(1 for item in items if re.search(r"\b(due|deadline|by|before)\b", item.lower()))
+    return len(items) >= 3 and due_marked_count >= 2
 
 
 def fetch_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
@@ -262,14 +361,15 @@ def extract_candidates(state: ProcessEmailsState, deps: dict) -> ProcessEmailsSt
         analysis = analyses.get(email.id)
         if classification.category in {"task", "task+note", "event+task"}:
             structured = _build_structured_content(email.subject, email.sender, email.body, analysis) if analysis else None
+            inferred_scheduled, inferred_deadline = _infer_task_dates(email.body, analysis) if analysis else (None, None)
             tasks[email.id] = ExtractedTaskCandidate(
                 title=analysis.suggested_title if analysis else email.subject,
                 notes=structured.full_markdown if structured else email.body[:500],
                 structured_content=structured,
-                scheduled=analysis.suggested_scheduled if analysis else None,
-                deadline=analysis.suggested_deadline if analysis else None,
+                scheduled=inferred_scheduled,
+                deadline=inferred_deadline,
                 contexts=analysis.suggested_contexts if analysis else [],
-                importance=analysis.suggested_importance if analysis else None,
+                importance=_normalize_importance(analysis.suggested_importance) if analysis else None,
                 estimated_minutes=analysis.suggested_time_required if analysis else None,
                 project_name=analysis.suggested_project_name if analysis else None,
             )
@@ -377,6 +477,8 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         if classification.category in {"task", "task+note", "event+task"} and email.id in task_candidates:
             candidate = task_candidates[email.id]
             matched_contexts = state.get("resolved_contexts", {}).get(email.id, candidate.contexts)
+            if len(matched_contexts) > 1:
+                matched_contexts = matched_contexts[:1]
             ai_summary = cost_service.summarize_recent_usage(
                 event_count=0,
                 operation_prefix="",
@@ -416,6 +518,56 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                         ai_cost_summary=ai_cost_md,
                     )
                 )
+
+            if (
+                created_task
+                and created_task.task
+                and analysis
+                and _should_split_into_subtasks(analysis, matched_contexts)
+            ):
+                created_subtasks: list[dict] = []
+                parent_title = created_task.task.title
+                for action_item in analysis.action_items:
+                    text = (action_item.text or "").strip()
+                    if not text:
+                        continue
+                    sub_scheduled, sub_deadline = _infer_item_dates(text)
+                    sub_contexts = _infer_contexts_for_item(text, matched_contexts)
+                    sub_result = task_service.create_task(
+                        TaskCreateInput(
+                            title=text[:180],
+                            notes=f"Subtask extracted from email task: {parent_title}\n\n{text}",
+                            contexts=sub_contexts,
+                            importance=candidate.importance,
+                            estimated_minutes=max(10, int((candidate.estimated_minutes or 30) / max(1, len(analysis.action_items)))),
+                            scheduled=sub_scheduled or candidate.scheduled,
+                            deadline=sub_deadline or candidate.deadline,
+                            status="Inbox",
+                            project_id=selected_project_id,
+                            parent_id=created_task.task.id,
+                        )
+                    )
+                    if preview_only:
+                        sub_result.created = False
+                    created_subtasks.append(
+                        {
+                            "title": text,
+                            "task_id": sub_result.task.id if sub_result.task else None,
+                            "created": sub_result.created,
+                            "contexts": sub_contexts,
+                            "scheduled": sub_scheduled or candidate.scheduled,
+                            "deadline": sub_deadline or candidate.deadline,
+                        }
+                    )
+                if created_subtasks:
+                    review_items.append(
+                        {
+                            "item_type": "subtasks_created",
+                            "reason": "Multiple distinct action items detected; created child tasks under parent email task.",
+                            "options": created_subtasks,
+                            "confidence": build_confidence(0.86, "Subtask split applied from multiple distinct actions.", False).model_dump(),
+                        }
+                    )
                 created_task.created = not preview_only and created_task.created
             else:
                 created_task = task_service.create_task(
