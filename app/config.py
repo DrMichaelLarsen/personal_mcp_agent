@@ -47,8 +47,10 @@ class NotionDatabaseConfig(BaseModel):
     notes_property: str | None = "Description"
     source_id_property: str | None = "Source ID"
     ai_cost_property: str | None = "ai_cost"
-    allowed_statuses: list[str] = Field(default_factory=lambda: ["Inbox", "Next", "In Progress", "Done"])
-    default_status: str = "Inbox"
+    allowed_statuses: list[str] = Field(
+        default_factory=lambda: ["To Do", "Not started", "In Progress", "Completed", "Done"]
+    )
+    default_status: str = "To Do"
     default_priority: Literal["low", "medium", "high"] = "medium"
     default_importance: int = 50
     require_area: bool = False

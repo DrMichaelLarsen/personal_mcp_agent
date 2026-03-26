@@ -13,7 +13,7 @@ class NotionClient:
         self.api_key = api_key
         self.base_url = "https://api.notion.com/v1"
         self.version = "2022-06-28"
-        self._database_schema_cache: dict[str, dict[str, str]] = {}
+        self._database_schema_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
     def _headers(self) -> dict[str, str]:
         if not self.api_key:
@@ -35,7 +35,13 @@ class NotionClient:
             raise RuntimeError(f"Notion API error {exc.response.status_code} on {path}: {detail}") from exc
         return response.json()
 
-    def _encode_property(self, name: str, value: Any, expected_type: str | None = None) -> dict[str, Any] | None:
+    def _encode_property(
+        self,
+        name: str,
+        value: Any,
+        expected_type: str | None = None,
+        property_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         lower_name = name.lower().strip()
 
         def _looks_like_notion_id(raw: str) -> bool:
@@ -45,7 +51,7 @@ class NotionClient:
             return None
 
         if expected_type:
-            return self._encode_property_by_type(expected_type, value)
+            return self._encode_property_by_type(expected_type, value, property_schema)
 
         relation_like = {
             "project",
@@ -124,7 +130,12 @@ class NotionClient:
             return {"rich_text": [{"type": "text", "text": {"content": stripped[:2000]}}]}
         return {"rich_text": [{"type": "text", "text": {"content": str(value)}}]}
 
-    def _encode_property_by_type(self, expected_type: str, value: Any) -> dict[str, Any] | None:
+    def _encode_property_by_type(
+        self,
+        expected_type: str,
+        value: Any,
+        property_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         expected = expected_type.strip().lower()
 
         def _id_list(raw: Any) -> list[dict[str, str]]:
@@ -154,7 +165,14 @@ class NotionClient:
         if expected in {"select", "status"}:
             if not isinstance(value, str) or not value.strip():
                 return None
-            return {expected: {"name": value.strip()}}
+            option_name = value.strip()
+            options = []
+            if property_schema:
+                inner = property_schema.get(expected) or {}
+                options = [opt.get("name") for opt in inner.get("options", []) if isinstance(opt, dict) and opt.get("name")]
+            if options and option_name not in options:
+                return None
+            return {expected: {"name": option_name}}
         if expected == "multi_select":
             if isinstance(value, str):
                 values = [value]
@@ -185,28 +203,43 @@ class NotionClient:
         # Not writable or unknown types (formula, rollup, created_time, etc.)
         return None
 
-    def _encode_properties(self, properties: dict[str, Any], expected_types: dict[str, str] | None = None) -> dict[str, Any]:
+    def _encode_properties(
+        self,
+        properties: dict[str, Any],
+        expected_types: dict[str, str] | None = None,
+        property_schemas: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         encoded: dict[str, Any] = {}
         for key, value in properties.items():
             if not key:
                 continue
             expected_type = expected_types.get(key) if expected_types else None
-            prop = self._encode_property(key, value, expected_type=expected_type)
+            prop = self._encode_property(
+                key,
+                value,
+                expected_type=expected_type,
+                property_schema=property_schemas.get(key) if property_schemas else None,
+            )
             if prop is not None:
                 encoded[key] = prop
         return encoded
 
-    def _get_database_property_types(self, database_id: str) -> dict[str, str]:
+    def _get_database_schema(self, database_id: str) -> dict[str, dict[str, Any]]:
         if database_id in self._database_schema_cache:
             return self._database_schema_cache[database_id]
         raw = self._request("GET", f"/databases/{database_id}")
         properties = raw.get("properties", {})
+        schema = {name: definition for name, definition in properties.items() if isinstance(definition, dict)}
+        self._database_schema_cache[database_id] = schema
+        return schema
+
+    def _get_database_property_types(self, database_id: str) -> dict[str, str]:
+        schema = self._get_database_schema(database_id)
         mapping: dict[str, str] = {}
-        for name, definition in properties.items():
+        for name, definition in schema.items():
             ptype = definition.get("type")
             if ptype:
                 mapping[name] = ptype
-        self._database_schema_cache[database_id] = mapping
         return mapping
 
     def _get_parent_database_id(self, page_id: str) -> str | None:
@@ -320,10 +353,11 @@ class NotionClient:
         }
 
     def create_page(self, database_id: str, properties: dict[str, Any], children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        property_schemas = self._get_database_schema(database_id)
         property_types = self._get_database_property_types(database_id)
         payload: dict[str, Any] = {
             "parent": {"database_id": database_id},
-            "properties": self._encode_properties(properties, property_types),
+            "properties": self._encode_properties(properties, property_types, property_schemas),
         }
         if children:
             payload["children"] = self._encode_blocks(children)
@@ -336,7 +370,8 @@ class NotionClient:
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         db_id = self._get_parent_database_id(page_id)
         property_types = self._get_database_property_types(db_id) if db_id else None
-        payload = {"properties": self._encode_properties(properties, property_types)}
+        property_schemas = self._get_database_schema(db_id) if db_id else None
+        payload = {"properties": self._encode_properties(properties, property_types, property_schemas)}
         raw = self._request("PATCH", f"/pages/{page_id}", payload)
         return self._normalize_page(raw)
 
