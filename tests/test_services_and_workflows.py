@@ -20,6 +20,7 @@ from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
 from app.adapters.calendar_client import CalendarClient
 from app.schemas.calendar import EventCreateInput
+from app.adapters.gmail_client import GmailClient
 from tests.fakes import FakeCalendarClient, FakeDriveClient, FakeGmailClient, FakeLLMClient, FakeNotionClient, make_attachment
 
 
@@ -437,6 +438,62 @@ def test_process_single_input_email_without_gmail_fetch():
     assert result.processed_count == 1
     assert result.results[0].analysis is not None
     assert result.results[0].created_task is not None
+
+
+def test_mark_processed_labels_are_applied_on_commit_mode():
+    _, _, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    workflow = ProcessEmailsWorkflow(
+        {
+            "email_service": email,
+            "matching_service": matching,
+            "project_service": projects,
+            "task_service": tasks,
+            "note_service": notes,
+            "calendar_service": calendar,
+        }
+    )
+    result = workflow.run(
+        ProcessEmailsInput(
+            preview_only=False,
+            mark_processed=True,
+            input_emails=[
+                EmailMessage(
+                    id="proc-1",
+                    thread_id="proc-thread-1",
+                    subject="Project Alpha: follow up",
+                    sender="lead@example.com",
+                    body="Please follow up on this task.",
+                    labels=["task"],
+                )
+            ],
+        )
+    )
+    assert result.processed_count == 1
+    assert "proc-1" in email.gmail.processed
+
+
+def test_gmail_extract_text_body_reads_nested_plain_part():
+    client = GmailClient()
+    detail = {
+        "id": "m1",
+        "payload": {
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {
+                            "mimeType": "text/plain",
+                            "body": {"data": "SGVsbG8gZnJvbSBuZXN0ZWQgcGFydA"},
+                        }
+                    ],
+                }
+            ]
+        },
+        "snippet": "snippet fallback",
+    }
+    extracted = client._extract_text_body(detail)
+    assert extracted == "Hello from nested part"
 
 
 def test_email_workflow_uses_only_active_projects_for_matching():

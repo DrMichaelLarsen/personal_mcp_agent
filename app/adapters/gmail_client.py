@@ -68,7 +68,7 @@ class GmailClient:
             payload = detail.get("payload", {})
             headers = payload.get("headers", [])
             header_map = {header.get("name", "").lower(): header.get("value", "") for header in headers}
-            body_text = self._extract_text_body(payload)
+            body_text = self._extract_text_body(detail, service)
             results.append(
                 EmailMessage(
                     id=detail.get("id", message_id),
@@ -105,7 +105,7 @@ class GmailClient:
         ).execute()
         return created["id"]
 
-    def _extract_text_body(self, payload: dict) -> str:
+    def _extract_text_body(self, payload: dict, service=None) -> str:
         import base64
 
         def _decode(data: str | None) -> str:
@@ -114,21 +114,64 @@ class GmailClient:
             padding = "=" * (-len(data) % 4)
             return base64.urlsafe_b64decode((data + padding).encode("utf-8")).decode("utf-8", errors="replace")
 
-        body = payload.get("body", {})
+        def _walk_parts(parts: list[dict], prefer_plain: bool = True) -> str:
+            for part in parts:
+                mime_type = (part.get("mimeType") or "").lower()
+                body = part.get("body") or {}
+                if prefer_plain and mime_type == "text/plain" and body.get("data"):
+                    return _decode(body.get("data"))
+                if not prefer_plain and mime_type == "text/html" and body.get("data"):
+                    return _decode(body.get("data"))
+                nested = _walk_parts(part.get("parts") or [], prefer_plain=prefer_plain)
+                if nested:
+                    return nested
+                if mime_type == "message/rfc822":
+                    nested = _walk_parts(part.get("parts") or [], prefer_plain=prefer_plain)
+                    if nested:
+                        return nested
+            return ""
+
+        def _fetch_attachment_text(message_id: str, part: dict) -> str:
+            body = part.get("body") or {}
+            attachment_id = body.get("attachmentId")
+            if not attachment_id:
+                return ""
+            local_service = service or self._get_service()
+            attachment = (
+                local_service.users()
+                .messages()
+                .attachments()
+                .get(userId="me", messageId=message_id, id=attachment_id)
+                .execute()
+            )
+            return _decode(attachment.get("data"))
+
+        detail = payload
+        root_payload = detail.get("payload", {}) if "payload" in detail else detail
+        message_id = detail.get("id", "")
+
+        body = root_payload.get("body", {})
         body_data = body.get("data")
         if body_data:
-            return _decode(body_data)
+            decoded = _decode(body_data).strip()
+            if decoded:
+                return decoded
 
-        for part in payload.get("parts", []) or []:
+        parts = root_payload.get("parts", []) or []
+
+        plain_text = _walk_parts(parts, prefer_plain=True).strip()
+        if plain_text:
+            return plain_text
+
+        html_text = _walk_parts(parts, prefer_plain=False).strip()
+        if html_text:
+            return html_text
+
+        for part in parts:
             mime_type = (part.get("mimeType") or "").lower()
-            part_body_data = (part.get("body") or {}).get("data")
-            if mime_type == "text/plain" and part_body_data:
-                return _decode(part_body_data)
+            attachment_text = _fetch_attachment_text(message_id, part).strip() if mime_type.startswith("text/") else ""
+            if attachment_text:
+                return attachment_text
 
-        for part in payload.get("parts", []) or []:
-            part_body_data = (part.get("body") or {}).get("data")
-            if part_body_data:
-                return _decode(part_body_data)
-
-        snippet = payload.get("snippet")
+        snippet = detail.get("snippet") or root_payload.get("snippet")
         return snippet or ""

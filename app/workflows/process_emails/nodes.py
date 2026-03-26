@@ -331,6 +331,35 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     dry_run=preview_only,
                 )
             )
+            if not created_event.created:
+                review_items.append(
+                    {
+                        "item_type": "calendar_commit",
+                        "reason": created_event.confidence.rationale,
+                        "options": [
+                            {
+                                "dry_run_requested": preview_only,
+                                "event_title": created_event.event.title,
+                                "start": created_event.event.start,
+                                "end": created_event.event.end,
+                            }
+                        ],
+                        "confidence": created_event.confidence.model_dump(),
+                    }
+                )
+
+        if request.mark_processed and not preview_only:
+            try:
+                deps["email_service"].mark_email_processed(email.id)
+            except Exception as exc:
+                review_items.append(
+                    {
+                        "item_type": "email_mark_processed",
+                        "reason": f"Failed to apply processed label: {exc}",
+                        "options": [{"email_id": email.id, "processed_label": deps["email_service"].settings.gmail.processed_label}],
+                        "confidence": build_confidence(0.3, "Processed label update failed.", True).model_dump(),
+                    }
+                )
 
         results.append(
             PerEmailProcessResult(

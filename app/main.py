@@ -91,7 +91,7 @@ class ProcessSingleEmailRequest(BaseModel):
     email: EmailMessage
     preview_only: bool = True
     confidence_threshold: float = 0.8
-    mark_processed: bool = False
+    mark_processed: bool = True
     create_project_if_missing: bool = False
 
 
@@ -99,7 +99,7 @@ class ProcessInboxRequest(BaseModel):
     max_count: int = 10
     preview_only: bool = True
     confidence_threshold: float = 0.8
-    mark_processed: bool = False
+    mark_processed: bool = True
     query: str | None = None
     create_project_if_missing: bool = False
 
