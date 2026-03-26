@@ -100,6 +100,15 @@ class ProjectService:
         if not cfg.database_id:
             return []
         active_values = {status.strip().lower() for status in self.settings.area_active_statuses}
+
+        def _as_single_id(value):
+            if isinstance(value, list):
+                if not value:
+                    return None
+                first = value[0]
+                return first if isinstance(first, str) else str(first)
+            return value
+
         records: list[AreaRecord] = []
         for raw in self.notion.query_database(cfg.database_id):
             props = raw.get("properties", {})
@@ -112,7 +121,7 @@ class ProjectService:
                 AreaRecord(
                     id=raw["id"],
                     title=title,
-                    parent_area_id=props.get(cfg.parent_property) if cfg.parent_property else None,
+                    parent_area_id=_as_single_id(props.get(cfg.parent_property)) if cfg.parent_property else None,
                     status=status,
                     raw=raw,
                 )

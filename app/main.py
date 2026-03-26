@@ -134,7 +134,7 @@ async def http_system_capabilities() -> dict:
 
 @app.get("/debug/projects")
 async def debug_projects() -> dict:
-    projects = project_service.list_projects()
+    projects = project_service.list_active_projects()
     return {
         "count": len(projects),
         "items": [
