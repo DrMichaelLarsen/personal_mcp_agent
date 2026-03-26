@@ -22,6 +22,8 @@ from app.utils.confidence import build_confidence
 from app.utils.ids import stable_hash
 from app.workflows.process_emails.state import ProcessEmailsState
 
+EMAIL_SOURCE_TAG = "Email"
+
 
 def _extract_urls(text: str) -> list[str]:
     if not text:
@@ -507,6 +509,7 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     TaskCreateInput(
                         title=candidate.title,
                         notes=notes_with_attachments,
+                        tags=[EMAIL_SOURCE_TAG],
                         contexts=matched_contexts,
                         estimated_minutes=candidate.estimated_minutes,
                         importance=candidate.importance,
@@ -537,6 +540,7 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                         TaskCreateInput(
                             title=text[:180],
                             notes=f"Subtask extracted from email task: {parent_title}\n\n{text}",
+                            tags=[EMAIL_SOURCE_TAG],
                             contexts=sub_contexts,
                             importance=candidate.importance,
                             estimated_minutes=max(10, int((candidate.estimated_minutes or 30) / max(1, len(analysis.action_items)))),
@@ -574,6 +578,7 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     TaskCreateInput(
                         title=candidate.title,
                         notes=notes_with_attachments,
+                        tags=[EMAIL_SOURCE_TAG],
                         contexts=matched_contexts,
                         estimated_minutes=candidate.estimated_minutes,
                         importance=candidate.importance,
@@ -595,6 +600,7 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     NoteCreateInput(
                         title=candidate.title,
                         content=content_with_attachments,
+                        tags=[EMAIL_SOURCE_TAG],
                         project_id=selected_project_id,
                         source_email_id=email.id,
                     )
