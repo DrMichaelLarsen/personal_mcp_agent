@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, timedelta
 from urllib.parse import urlencode
@@ -23,6 +24,7 @@ from app.utils.ids import stable_hash
 from app.workflows.process_emails.state import ProcessEmailsState
 
 EMAIL_SOURCE_TAG = "Email"
+logger = logging.getLogger(__name__)
 
 
 def _extract_urls(text: str) -> list[str]:
@@ -163,6 +165,9 @@ def _infer_item_dates(text: str) -> tuple[str | None, str | None]:
 
 
 def _infer_contexts_for_item(text: str, fallback_contexts: list[str]) -> list[str]:
+    def _looks_like_notion_id(value: str) -> bool:
+        return bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", value, re.IGNORECASE))
+
     lower = (text or "").lower()
     contexts: list[str] = []
     if any(token in lower for token in ["call", "phone", "voicemail"]):
@@ -171,7 +176,34 @@ def _infer_contexts_for_item(text: str, fallback_contexts: list[str]) -> list[st
         contexts.append("Computer")
     if any(token in lower for token in ["home", "house", "errand", "pickup", "drop off", "store"]):
         contexts.append("Home")
+    if fallback_contexts and all(_looks_like_notion_id(item) for item in fallback_contexts):
+        # Preserve resolved relation IDs for context properties backed by Notion relations.
+        return list(fallback_contexts)
     return contexts or list(fallback_contexts)
+
+
+def _infer_requested_contexts(email_subject: str, email_body: str, analysis: EmailAnalysis | None) -> list[str]:
+    if analysis and analysis.suggested_contexts:
+        return list(analysis.suggested_contexts)
+    text = f"{email_subject}\n{email_body}".lower()
+    candidates: list[str] = []
+    if any(token in text for token in ["call", "phone", "voicemail"]):
+        candidates.append("Phone")
+    if any(token in text for token in ["home", "house", "errand", "pickup", "drop off", "store"]):
+        candidates.append("Home")
+    if any(token in text for token in ["email", "doc", "review", "spreadsheet", "submit", "send", "reply", "link", "attachment", "follow up"]):
+        candidates.append("Computer")
+    # Conservative default for most email-origin tasks.
+    if not candidates:
+        candidates.append("Computer")
+    # Preserve deterministic order and uniqueness.
+    seen: set[str] = set()
+    output: list[str] = []
+    for item in candidates:
+        if item not in seen:
+            seen.add(item)
+            output.append(item)
+    return output
 
 
 def _should_split_into_subtasks(analysis: EmailAnalysis, parent_contexts: list[str]) -> bool:
@@ -197,8 +229,11 @@ def fetch_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     email_service = deps["email_service"]
     request = deps["request"]
     if request.input_emails:
+        logger.info("Using input emails supplied in request.", extra={"event": "workflow.process_emails.fetch.input", "context": {"count": len(request.input_emails)}})
         return {**state, "emails": request.input_emails}
-    return {**state, "emails": email_service.get_unprocessed_tagged_emails(request.max_count, request.query)}
+    emails = email_service.get_unprocessed_tagged_emails(request.max_count, request.query)
+    logger.info("Fetched tagged emails from Gmail.", extra={"event": "workflow.process_emails.fetch.gmail", "context": {"count": len(emails), "query": request.query}})
+    return {**state, "emails": emails}
 
 
 def classify_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
@@ -264,6 +299,23 @@ def classify_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState
                 confidence=build_confidence(score, f"Heuristic classification for email '{email.subject}'.", score < 0.8),
             )
         )
+    logger.info(
+        "Classified fetched emails.",
+        extra={
+            "event": "workflow.process_emails.classify.complete",
+            "context": {
+                "count": len(classifications),
+                "category_counts": {
+                    "task": sum(1 for c in classifications if c.category == "task"),
+                    "note": sum(1 for c in classifications if c.category == "note"),
+                    "event": sum(1 for c in classifications if c.category == "event"),
+                    "task+note": sum(1 for c in classifications if c.category == "task+note"),
+                    "event+task": sum(1 for c in classifications if c.category == "event+task"),
+                    "ignore": sum(1 for c in classifications if c.category == "ignore"),
+                },
+            },
+        },
+    )
     return {**state, "classifications": classifications}
 
 
@@ -272,6 +324,7 @@ def analyze_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     analyses: dict[str, EmailAnalysis] = {}
     for email in state.get("emails", []):
         analyses[email.id] = email_service.analyze_email(email)
+    logger.info("Completed email analysis stage.", extra={"event": "workflow.process_emails.analyze.complete", "context": {"count": len(analyses)}})
     return {**state, "analyses": analyses}
 
 
@@ -413,10 +466,26 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         token = (analysis.suggested_project_name if analysis and analysis.suggested_project_name else email.subject.split(":")[0]).strip()
         if token:
             matches[email.id] = matching_service.match_project(token, projects, metadata={"email_id": email.id})
-        requested_contexts = analysis.suggested_contexts if analysis else []
+        requested_contexts = _infer_requested_contexts(email.subject, email.body, analysis)
         matched_contexts, context_reviews = matching_service.match_contexts(requested_contexts, contexts, metadata={"email_id": email.id})
+        if not matched_contexts and contexts:
+            # Last fallback: choose best available context for "Computer" so relation-based
+            # context properties still receive a concrete context id.
+            matched_contexts, fallback_reviews = matching_service.match_contexts(["Computer"], contexts, metadata={"email_id": email.id})
+            context_reviews.extend(fallback_reviews)
         resolved_contexts[email.id] = matched_contexts
         context_review_items[email.id] = context_reviews
+    logger.info(
+        "Completed project/context matching.",
+        extra={
+            "event": "workflow.process_emails.match.complete",
+            "context": {
+                "project_matches": sum(1 for m in matches.values() if m and m.matched),
+                "project_reviews": sum(1 for m in matches.values() if m and m.review_items),
+                "context_reviews": sum(len(items) for items in context_review_items.values()),
+            },
+        },
+    )
     return {
         **state,
         "project_matches": matches,
@@ -521,6 +590,10 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                         ai_cost_summary=ai_cost_md,
                     )
                 )
+                logger.info(
+                    "Prepared task from email in preview/low-confidence mode.",
+                    extra={"event": "workflow.process_emails.task.preview", "context": {"email_id": email.id, "task_title": candidate.title, "contexts": matched_contexts, "scheduled": candidate.scheduled, "deadline": candidate.deadline}},
+                )
 
             if (
                 created_task
@@ -572,6 +645,10 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                             "confidence": build_confidence(0.86, "Subtask split applied from multiple distinct actions.", False).model_dump(),
                         }
                     )
+                    logger.info(
+                        "Created subtasks for email task.",
+                        extra={"event": "workflow.process_emails.task.subtasks", "context": {"email_id": email.id, "parent_task_id": created_task.task.id if created_task and created_task.task else None, "subtask_count": len(created_subtasks)}},
+                    )
                 created_task.created = not preview_only and created_task.created
             else:
                 created_task = task_service.create_task(
@@ -591,6 +668,10 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                         ai_cost_summary=ai_cost_md,
                     )
                 )
+                logger.info(
+                    "Created committed task from email.",
+                    extra={"event": "workflow.process_emails.task.commit", "context": {"email_id": email.id, "task_id": created_task.task.id if created_task.task else None, "contexts": matched_contexts, "scheduled": candidate.scheduled, "deadline": candidate.deadline}},
+                )
 
         if classification.category in {"note", "task+note"} and email.id in note_candidates:
             candidate = note_candidates[email.id]
@@ -604,6 +685,10 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                         project_id=selected_project_id,
                         source_email_id=email.id,
                     )
+                )
+                logger.info(
+                    "Created note from email.",
+                    extra={"event": "workflow.process_emails.note.create", "context": {"email_id": email.id, "note_id": created_note.note.id if created_note and created_note.note else None}},
                 )
                 if preview_only:
                     created_note.created = False
@@ -632,6 +717,10 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     project_id=selected_project_id,
                     dry_run=preview_only,
                 )
+            )
+            logger.info(
+                "Processed email event candidate.",
+                extra={"event": "workflow.process_emails.event.schedule", "context": {"email_id": email.id, "created": created_event.created if created_event else False, "dry_run": preview_only}},
             )
             if not created_event.created:
                 review_items.append(
@@ -675,4 +764,5 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                 review_items=review_items,
             )
         )
+    logger.info("Built per-email processing results.", extra={"event": "workflow.process_emails.results.complete", "context": {"result_count": len(results)}})
     return {**state, "results": results}

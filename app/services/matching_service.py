@@ -84,7 +84,7 @@ class MatchingService:
             best, score = scored[0]
             second_score = scored[1][1] if len(scored) > 1 else 0.0
             if score >= self.settings.confidence.auto_create and (score - second_score >= 0.08):
-                selected.append(best.title)
+                selected.append(best.id)
                 continue
 
             review_items.append(
@@ -98,7 +98,12 @@ class MatchingService:
             llm_choice = None
             if self._can_use_ambiguous_llm():
                 llm_choice = self._llm_select_best(requested, [c.title for c, _ in scored[:5]], metadata=metadata)
-            selected.append(llm_choice or requested)
+            if llm_choice:
+                winner = next((context for context, _ in scored if context.title == llm_choice), None)
+                if winner:
+                    selected.append(winner.id)
+                    continue
+            selected.append(best.id)
 
         return selected, review_items
 
