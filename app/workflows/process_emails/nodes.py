@@ -19,6 +19,7 @@ from app.schemas.email import (
 from app.schemas.notes import NoteCreateInput
 from app.schemas.projects import ProjectCreateInput
 from app.schemas.tasks import TaskCreateInput
+from app.schemas.common import ReviewItem
 from app.utils.confidence import build_confidence
 from app.utils.ids import stable_hash
 from app.workflows.process_emails.state import ProcessEmailsState
@@ -457,6 +458,14 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     project_service = deps["project_service"]
     projects = project_service.list_active_projects()
     contexts = project_service.list_contexts()
+    if not project_service.settings.contexts_db.database_id:
+        logger.warning(
+            "Contexts DB is not configured; context matching will return names and relation-based Contexts fields may remain empty.",
+            extra={
+                "event": "workflow.process_emails.match.contexts_db_missing",
+                "context": {"env_key": "PPMCP_CONTEXTS_DB__DATABASE_ID"},
+            },
+        )
     matches = {}
     resolved_contexts: dict[str, list[str]] = {}
     context_review_items = {}
@@ -472,6 +481,15 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
             )
         requested_contexts = _infer_requested_contexts(email.subject, email.body, analysis)
         matched_contexts, context_reviews = matching_service.match_contexts(requested_contexts, contexts, metadata={"email_id": email.id})
+        if requested_contexts and not contexts:
+            context_reviews.append(
+                ReviewItem(
+                    item_type="context_config",
+                    reason="Contexts database is not configured; cannot resolve context names to relation IDs.",
+                    options=[{"required_env": "PPMCP_CONTEXTS_DB__DATABASE_ID", "requested_contexts": requested_contexts}],
+                    confidence=build_confidence(0.2, "Set Contexts DB mapping to enable reliable context assignment.", True),
+                )
+            )
         if not matched_contexts and contexts:
             # Last fallback: choose best available context for "Computer" so relation-based
             # context properties still receive a concrete context id.

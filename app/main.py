@@ -132,6 +132,25 @@ async def http_system_capabilities() -> dict:
     }
 
 
+@app.get("/debug/projects")
+async def debug_projects() -> dict:
+    projects = project_service.list_projects()
+    return {
+        "count": len(projects),
+        "items": [
+            {
+                "id": project.id,
+                "title": project.title,
+                "description": project.description,
+                "status": project.status,
+                "area_path": project.area_path,
+                "project_path": project.project_path,
+            }
+            for project in projects
+        ],
+    }
+
+
 @app.get("/ai/pricing")
 async def ai_pricing() -> dict:
     return {"pricing": cost_service.get_pricing_table()}

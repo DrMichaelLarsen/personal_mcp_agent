@@ -238,6 +238,11 @@ Important notes:
 - If your Projects database has both a `Notes` relation and a separate text summary field, set:
   - `PPMCP_PROJECTS_DB__NOTES_PROPERTY=Notes` (relation)
   - `PPMCP_PROJECTS_DB__DESCRIPTION_PROPERTY=Description` (text/AI summary used for matching)
+- To save task contexts reliably (when `Tasks.Contexts` is a relation), you must set:
+  - `PPMCP_CONTEXTS_DB__DATABASE_ID=<your_contexts_db_id>`
+  - `PPMCP_CONTEXTS_DB__TITLE_PROPERTY=Name`
+  - `PPMCP_CONTEXTS_DB__STATUS_PROPERTY=Status`
+  - and keep `PPMCP_TASKS_DB__CONTEXTS_PROPERTY=Contexts`
 
 Example Unraid/Docker-style paths:
 
