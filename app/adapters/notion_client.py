@@ -369,13 +369,33 @@ class NotionClient:
             "parent": {"database_id": database_id},
             "properties": self._encode_properties(properties, property_types, property_schemas),
         }
+        children_to_send = None
         if children:
-            payload["children"] = self._encode_blocks(children)
+            children_to_send = children
+            encoded_children = self._encode_blocks(children_to_send)
+            chunks = self._chunk_blocks(encoded_children, max_blocks=100)
+            if chunks:
+                payload["children"] = chunks[0]
         raw = self._request("POST", "/pages", payload)
+        if children and raw.get("id"):
+            encoded_children = self._encode_blocks(children_to_send)
+            chunks = self._chunk_blocks(encoded_children, max_blocks=100)
+            for chunk in chunks[1:]:
+                self._append_children(raw["id"], chunk)
         normalized = self._normalize_page(raw)
-        if children:
-            normalized["children"] = children
+        if children_to_send:
+            normalized["children"] = children_to_send
         return normalized
+
+    def _chunk_blocks(self, blocks: list[dict[str, Any]], max_blocks: int = 100) -> list[list[dict[str, Any]]]:
+        if max_blocks <= 0:
+            return [blocks] if blocks else []
+        return [blocks[i : i + max_blocks] for i in range(0, len(blocks), max_blocks)]
+
+    def _append_children(self, page_id: str, encoded_blocks: list[dict[str, Any]]) -> None:
+        if not encoded_blocks:
+            return
+        self._request("PATCH", f"/blocks/{page_id}/children", {"children": encoded_blocks})
 
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         db_id = self._get_parent_database_id(page_id)

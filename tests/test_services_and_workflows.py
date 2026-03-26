@@ -19,6 +19,7 @@ from app.services.task_service import TaskService
 from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
 from app.adapters.calendar_client import CalendarClient
+from app.adapters.notion_client import NotionClient
 from app.schemas.calendar import EventCreateInput
 from app.adapters.gmail_client import GmailClient
 from tests.fakes import FakeCalendarClient, FakeDriveClient, FakeGmailClient, FakeLLMClient, FakeNotionClient, make_attachment
@@ -843,3 +844,12 @@ def test_cost_service_supports_new_openai_flagship_models(tmp_path):
         output_tokens=1_000_000,
     )
     assert value == 5.25
+
+
+def test_notion_client_chunks_children_blocks_in_100s():
+    client = NotionClient(api_key="test")
+    blocks = [{"type": "paragraph", "text": f"line {i}", "rich_text": [{"text": f"line {i}", "annotations": {}}]} for i in range(150)]
+    chunks = client._chunk_blocks(blocks, max_blocks=100)
+    assert len(chunks) == 2
+    assert len(chunks[0]) == 100
+    assert len(chunks[1]) == 50
