@@ -45,6 +45,7 @@ class NotionDatabaseConfig(BaseModel):
     tags_property: str | None = "Tags"
     url_property: str | None = "URL"
     notes_property: str | None = "Description"
+    description_property: str | None = None
     source_id_property: str | None = "Source ID"
     ai_cost_property: str | None = "ai_cost"
     store_content_in_property: bool = True

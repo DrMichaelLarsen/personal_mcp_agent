@@ -717,6 +717,30 @@ def test_sender_bias_and_project_profile_help_match_project():
     assert result.selected_project.id != advocate.id
 
 
+def test_project_description_can_be_resolved_from_related_notes_relation():
+    settings, notion, projects, *_ = build_context()
+    settings.notes_db.database_id = "notes-db"
+    settings.projects_db.notes_property = "Notes"
+    note = notion.create_page(
+        "notes-db",
+        {
+            settings.notes_db.title_property: "Residency summary",
+            settings.notes_db.notes_property: "Residency scheduling and duty hours tracking",
+        },
+    )
+    created = notion.create_page(
+        settings.projects_db.database_id,
+        {
+            settings.projects_db.title_property: "Residency Rotation Tracking",
+            settings.projects_db.status_property: "Active",
+            settings.projects_db.notes_property: [note["id"]],
+        },
+    )
+    record = projects.get_project(created["id"])
+    assert record.description is not None
+    assert "Residency scheduling" in record.description
+
+
 def test_llm_factory_selects_gemini_provider():
     settings = get_settings()
     settings.llm.enabled = True

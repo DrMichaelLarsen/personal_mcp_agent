@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from app.adapters.llm_client import LLMClient
 from app.adapters.notion_client import NotionClient
@@ -200,11 +201,66 @@ class ProjectService:
                 return first if isinstance(first, str) else str(first)
             return value
 
+        def _as_text(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if isinstance(value, list):
+                text_items = [item for item in value if isinstance(item, str)]
+                return " | ".join(text_items) if text_items else None
+            if isinstance(value, dict):
+                for key in ("name", "title", "text", "plain_text"):
+                    part = value.get(key)
+                    if isinstance(part, str):
+                        return part
+                return None
+            return str(value)
+
+        def _looks_like_page_id(value: str) -> bool:
+            # Support both UUID-style Notion IDs and short fake IDs used in tests.
+            return bool(
+                re.match(r"^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|page-\d+)$", value, re.IGNORECASE)
+            )
+
+        def _list_is_relation_ids(value) -> bool:
+            return isinstance(value, list) and bool(value) and all(isinstance(item, str) and _looks_like_page_id(item.strip()) for item in value)
+
+        def _description_from_related_notes(value):
+            if not isinstance(value, list):
+                return None
+            note_ids = [item for item in value if isinstance(item, str) and item.strip()]
+            if not note_ids:
+                return None
+            snippets: list[str] = []
+            for note_id in note_ids[:5]:
+                try:
+                    note_raw = self.notion.get_page(note_id)
+                except Exception:
+                    continue
+                note_props = note_raw.get("properties", {})
+                note_text = _as_text(note_props.get(self.settings.notes_db.notes_property)) if self.settings.notes_db.notes_property else None
+                if not note_text:
+                    note_text = _as_text(note_props.get(self.settings.notes_db.title_property)) or _as_text(note_raw.get("title"))
+                if note_text:
+                    snippets.append(note_text)
+            return " | ".join(snippets) if snippets else None
+
+        raw_description = props.get(cfg.description_property) if cfg.description_property else None
+        if raw_description is None and cfg.notes_property:
+            raw_description = props.get(cfg.notes_property)
+        description = _as_text(raw_description)
+        if _list_is_relation_ids(raw_description):
+            description = None
+        if description is None and cfg.notes_property and cfg.description_property != cfg.notes_property:
+            relation_value = props.get(cfg.notes_property)
+            description = _description_from_related_notes(relation_value) or _as_text(relation_value)
+
         return ProjectRecord(
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
-            description=props.get(cfg.notes_property) if cfg.notes_property else None,
+            description=description,
             area_id=_as_single_id(props.get(cfg.area_property)) if cfg.area_property else None,
             parent_project_id=_as_single_id(props.get(cfg.parent_project_property)) if cfg.parent_project_property else None,
             target_deadline=props.get(cfg.target_deadline_property) if cfg.target_deadline_property else None,

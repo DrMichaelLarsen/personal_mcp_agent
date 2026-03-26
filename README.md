@@ -235,6 +235,9 @@ Important notes:
 - On Unraid, mount your credential JSON files into the container and point the `.env` paths at those mounted files
 - The task schema is now set up to map your real task fields like `Contexts`, `Importance`, `Scheduled`, `Deadline`, `Assigned`, `Goal`, `dependency_of`, `parent`, and `Time Required`
 - The project schema is set up for `Status`, `Area`, `Parent Project`, `Target Deadline`, `Importance`, `Priority` (checkbox), `Budget`, and `Score` sorting
+- If your Projects database has both a `Notes` relation and a separate text summary field, set:
+  - `PPMCP_PROJECTS_DB__NOTES_PROPERTY=Notes` (relation)
+  - `PPMCP_PROJECTS_DB__DESCRIPTION_PROPERTY=Description` (text/AI summary used for matching)
 
 Example Unraid/Docker-style paths:
 
