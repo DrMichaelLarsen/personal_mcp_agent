@@ -89,6 +89,10 @@ class NotionClient:
                 ptype = "checkbox"
             elif "url" in value:
                 ptype = "url"
+            elif "formula" in value:
+                ptype = "formula"
+            elif "rollup" in value:
+                ptype = "rollup"
 
         if ptype == "title":
             parts = value.get("title", [])
@@ -106,6 +110,8 @@ class NotionClient:
             return [item.get("name") for item in value.get("multi_select", []) if item.get("name")]
         if ptype == "relation":
             ids = [item.get("id") for item in value.get("relation", []) if item.get("id")]
+            if not ids:
+                return None
             if len(ids) == 1:
                 return ids[0]
             return ids
@@ -118,6 +124,36 @@ class NotionClient:
             return value.get("checkbox")
         if ptype == "url":
             return value.get("url")
+        if ptype == "formula":
+            formula = value.get("formula") or {}
+            ftype = formula.get("type")
+            if ftype == "number":
+                return formula.get("number")
+            if ftype == "string":
+                return formula.get("string")
+            if ftype == "boolean":
+                return formula.get("boolean")
+            if ftype == "date":
+                date_value = formula.get("date") or {}
+                return date_value.get("start")
+            return formula
+        if ptype == "rollup":
+            rollup = value.get("rollup") or {}
+            rtype = rollup.get("type")
+            if rtype == "number":
+                return rollup.get("number")
+            if rtype == "date":
+                date_value = rollup.get("date") or {}
+                return date_value.get("start")
+            if rtype == "array":
+                arr = rollup.get("array") or []
+                normalized_arr = [self._normalize_property(item) if isinstance(item, dict) else item for item in arr]
+                if not normalized_arr:
+                    return None
+                if len(normalized_arr) == 1:
+                    return normalized_arr[0]
+                return normalized_arr
+            return rollup
         return value
 
     def _normalize_page(self, raw: dict[str, Any]) -> dict[str, Any]:
