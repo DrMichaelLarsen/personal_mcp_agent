@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlencode
 
 from app.schemas.calendar import EventCreateInput
@@ -19,6 +20,57 @@ from app.schemas.tasks import TaskCreateInput
 from app.utils.confidence import build_confidence
 from app.utils.ids import stable_hash
 from app.workflows.process_emails.state import ProcessEmailsState
+
+
+def _extract_urls(text: str) -> list[str]:
+    if not text:
+        return []
+    return re.findall(r"https?://[^\s)\]>\"]+", text)
+
+
+def _extract_join_links(text: str) -> list[str]:
+    links = _extract_urls(text)
+    join_tokens = ("teams.microsoft.com", "meet.google.com", "zoom.us", "webex", "gotomeeting", "join")
+    return [link for link in links if any(token in link.lower() for token in join_tokens)]
+
+
+def _build_event_description(email_sender: str, email_body: str, analysis: EmailAnalysis) -> str:
+    join_links = _extract_join_links(email_body)
+    base_description = (analysis.event_description or "").strip()
+
+    # Keep exact LLM description when there are no extracted join links to add.
+    # This preserves deterministic behavior for existing event-description logic.
+    if base_description and not join_links:
+        return base_description
+
+    lines: list[str] = []
+    if base_description:
+        lines.append(base_description)
+    elif analysis.summary:
+        lines.append(f"Summary: {analysis.summary}")
+
+    join_links = _extract_join_links(email_body)
+    if join_links:
+        lines.append("\nJoin links:")
+        lines.extend(f"- {link}" for link in join_links)
+
+    if analysis.action_items:
+        lines.append("\nPrep checklist:")
+        lines.extend(f"- {item.text}" for item in analysis.action_items if item.text)
+
+    if analysis.event_hints:
+        lines.append("\nEvent hints:")
+        lines.extend(f"- {item}" for item in analysis.event_hints)
+
+    all_links = _extract_urls(email_body)
+    if all_links:
+        lines.append("\nReference links:")
+        lines.extend(f"- {link}" for link in all_links[:8])
+
+    lines.append(f"\nFrom: {email_sender}")
+    if email_body:
+        lines.append("\nOriginal context:\n" + email_body[:4000])
+    return "\n".join(lines).strip()
 
 
 def fetch_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
@@ -198,7 +250,11 @@ def extract_candidates(state: ProcessEmailsState, deps: dict) -> ProcessEmailsSt
                 title=f"AI Review: {event_title}",
                 start=analysis.event_start if analysis else None,
                 end=analysis.event_end if analysis else None,
-                description=analysis.event_description if analysis else None,
+                description=_build_event_description(
+                    email.sender,
+                    email.body,
+                    analysis,
+                ) if analysis else email.body[:2000],
                 location=analysis.event_location if analysis else None,
                 project_name=analysis.suggested_project_name if analysis else None,
             )
