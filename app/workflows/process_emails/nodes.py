@@ -480,7 +480,11 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                 metadata={"email_id": email.id, "sender": email.sender},
             )
         requested_contexts = _infer_requested_contexts(email.subject, email.body, analysis)
-        matched_contexts, context_reviews = matching_service.match_contexts(requested_contexts, contexts, metadata={"email_id": email.id})
+        matched_contexts, context_reviews = matching_service.match_contexts(
+            requested_contexts,
+            contexts,
+            metadata={"email_id": email.id, "source": "email"},
+        )
         if requested_contexts and not contexts:
             context_reviews.append(
                 ReviewItem(
@@ -493,7 +497,11 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         if not matched_contexts and contexts:
             # Last fallback: choose best available context for "Computer" so relation-based
             # context properties still receive a concrete context id.
-            matched_contexts, fallback_reviews = matching_service.match_contexts(["Computer"], contexts, metadata={"email_id": email.id})
+            matched_contexts, fallback_reviews = matching_service.match_contexts(
+                ["Computer"],
+                contexts,
+                metadata={"email_id": email.id, "source": "email"},
+            )
             context_reviews.extend(fallback_reviews)
         resolved_contexts[email.id] = matched_contexts
         context_review_items[email.id] = context_reviews

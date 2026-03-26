@@ -178,17 +178,74 @@ class MatchingService:
         available_contexts: list[ContextRecord],
         metadata: dict | None = None,
     ) -> tuple[list[str], list[ReviewItem]]:
+        def _normalize(value: str) -> str:
+            return "".join(ch.lower() for ch in value.strip() if ch.isalnum())
+
+        def _context_profile_text(context: ContextRecord) -> str:
+            return " | ".join([context.title or "", context.description or ""])
+
+        def _is_agenda_context(context: ContextRecord) -> bool:
+            haystack = _context_profile_text(context).lower()
+            return "agenda" in haystack or "1:1" in haystack or "one on one" in haystack
+
+        def _looks_like_agenda_request(requested: str, meta: dict | None) -> bool:
+            requested_text = (requested or "").lower()
+            sender = ((meta or {}).get("sender") or "").lower()
+            return any(token in requested_text for token in ["agenda", "1:1", "one on one", "with "]) or "katie" in sender
+
+        def _find_email_computer_context() -> ContextRecord | None:
+            preferred_tokens = ("computer", "pc", "online", "web")
+            for context in available_contexts:
+                title = context.title.lower()
+                if any(token in title for token in preferred_tokens):
+                    return context
+            return None
+
         if not requested_contexts or not available_contexts:
             return requested_contexts, []
 
         selected: list[str] = []
         review_items: list[ReviewItem] = []
+        is_email_source = ((metadata or {}).get("source") or "").strip().lower() == "email"
         for requested in requested_contexts:
+            requested_norm = _normalize(requested)
+
+            # Deterministic exact/alias match first.
+            exact = next((context for context in available_contexts if _normalize(context.title) == requested_norm), None)
+            if exact:
+                selected.append(exact.id)
+                continue
+
+            # For email-origin tasks, strongly bias to Computer-like context when requested.
+            if is_email_source and requested_norm in {"computer", "email", "online", "web", "internet"}:
+                computer_ctx = _find_email_computer_context()
+                if computer_ctx:
+                    selected.append(computer_ctx.id)
+                    continue
+
             scored = sorted(
-                [(context, similarity(requested, context.title)) for context in available_contexts],
+                [
+                    (
+                        context,
+                        max(
+                            similarity(requested, context.title),
+                            similarity(requested, _context_profile_text(context)),
+                        ),
+                    )
+                    for context in available_contexts
+                ],
                 key=lambda pair: pair[1],
                 reverse=True,
             )
+
+            # Extra safety: avoid agenda contexts for generic email/computer requests.
+            if is_email_source and requested_norm in {"computer", "email", "online", "web", "internet"}:
+                if scored and _is_agenda_context(scored[0][0]):
+                    if not _looks_like_agenda_request(requested, metadata):
+                        computer_ctx = _find_email_computer_context()
+                        if computer_ctx:
+                            selected.append(computer_ctx.id)
+                            continue
             best, score = scored[0]
             second_score = scored[1][1] if len(scored) > 1 else 0.0
             if score >= self.settings.confidence.auto_create and (score - second_score >= 0.08):
@@ -211,7 +268,13 @@ class MatchingService:
                 if winner:
                     selected.append(winner.id)
                     continue
-            selected.append(best.id)
+
+            # Conservative behavior: do not silently select an ambiguous context.
+            # For email tasks, prefer Computer context if available as safe default.
+            if is_email_source:
+                computer_ctx = _find_email_computer_context()
+                if computer_ctx:
+                    selected.append(computer_ctx.id)
 
         return selected, review_items
 

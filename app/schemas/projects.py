@@ -58,6 +58,7 @@ class ProjectMatchResult(BaseModel):
 class ContextRecord(BaseModel):
     id: str
     title: str
+    description: str | None = None
     status: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 

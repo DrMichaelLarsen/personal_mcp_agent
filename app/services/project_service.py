@@ -84,15 +84,36 @@ class ProjectService:
         if not cfg.database_id:
             return []
         active_values = {status.strip().lower() for status in self.settings.context_active_statuses}
+
+        def _as_text(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if isinstance(value, list):
+                text_items = [item for item in value if isinstance(item, str)]
+                return " | ".join(text_items) if text_items else None
+            if isinstance(value, dict):
+                for key in ("name", "title", "text", "plain_text"):
+                    part = value.get(key)
+                    if isinstance(part, str):
+                        return part
+                return None
+            return str(value)
+
         records: list[ContextRecord] = []
         for raw in self.notion.query_database(cfg.database_id):
             props = raw.get("properties", {})
             title = props.get(cfg.title_property) or raw.get("title", "")
+            raw_description = props.get(cfg.description_property) if cfg.description_property else None
+            if raw_description is None and cfg.notes_property:
+                raw_description = props.get(cfg.notes_property)
+            description = _as_text(raw_description)
             status = props.get(cfg.status_property) if cfg.status_property else None
             status_value = (status or "").strip().lower()
             if active_values and status_value and status_value not in active_values:
                 continue
-            records.append(ContextRecord(id=raw["id"], title=title, status=status, raw=raw))
+            records.append(ContextRecord(id=raw["id"], title=title, description=description, status=status, raw=raw))
         return records
 
     def list_areas(self) -> list[AreaRecord]:

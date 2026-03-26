@@ -7,7 +7,7 @@ from app.schemas.calendar import CalendarEvent
 from app.schemas.email import EmailMessage, ProcessEmailsInput
 from app.schemas.notes import NoteCreateInput
 from app.schemas.planning import DayPlanInput
-from app.schemas.projects import ProjectCreateInput, ProjectRecord
+from app.schemas.projects import ContextRecord, ProjectCreateInput, ProjectRecord
 from app.schemas.tasks import TaskCreateInput
 from app.services.calendar_service import CalendarService
 from app.services.email_service import EmailAnalysisService, EmailService
@@ -853,3 +853,36 @@ def test_notion_client_chunks_children_blocks_in_100s():
     assert len(chunks) == 2
     assert len(chunks[0]) == 100
     assert len(chunks[1]) == 50
+
+
+def test_context_matching_for_email_defaults_to_computer_over_ambiguous_context():
+    settings = get_settings()
+    matching = MatchingService(settings)
+    contexts = [
+        ContextRecord(id="ctx-computer", title="Computer", status="Active"),
+        ContextRecord(id="ctx-agenda", title="Agenda:Katie", status="Active"),
+    ]
+    selected, reviews = matching.match_contexts(["Computer"], contexts, metadata={"source": "email", "email_id": "e1"})
+    assert selected == ["ctx-computer"]
+
+
+def test_context_matching_for_email_does_not_silently_pick_non_computer_on_ambiguous_input():
+    settings = get_settings()
+    matching = MatchingService(settings)
+    contexts = [
+        ContextRecord(id="ctx-computer", title="Computer", status="Active"),
+        ContextRecord(id="ctx-agenda", title="Agenda:Katie", status="Active"),
+    ]
+    selected, reviews = matching.match_contexts(["Comptuer"], contexts, metadata={"source": "email", "email_id": "e2"})
+    assert selected == ["ctx-computer"]
+
+
+def test_context_matching_can_use_context_description_profile():
+    settings = get_settings()
+    matching = MatchingService(settings)
+    contexts = [
+        ContextRecord(id="ctx-computer", title="Computer", description="General computer/email/internet work", status="Active"),
+        ContextRecord(id="ctx-agenda", title="Agenda:Katie", description="Items to review with Katie in 1:1", status="Active"),
+    ]
+    selected, _ = matching.match_contexts(["internet admin"], contexts, metadata={"source": "email", "email_id": "e3"})
+    assert selected == ["ctx-computer"]
