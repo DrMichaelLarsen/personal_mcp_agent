@@ -296,6 +296,8 @@ class NotionClient:
             if len(ids) == 1:
                 return ids[0]
             return ids
+        if ptype == "people":
+            return [item.get("id") for item in value.get("people", []) if item.get("id")]
         if ptype == "date":
             date_value = value.get("date")
             return (date_value or {}).get("start")
@@ -305,6 +307,10 @@ class NotionClient:
             return value.get("checkbox")
         if ptype == "url":
             return value.get("url")
+        if ptype == "phone_number":
+            return value.get("phone_number")
+        if ptype == "email":
+            return value.get("email")
         if ptype == "formula":
             formula = value.get("formula") or {}
             ftype = formula.get("type")

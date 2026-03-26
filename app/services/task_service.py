@@ -133,6 +133,31 @@ class TaskService:
     def _to_record(self, raw: dict) -> TaskRecord:
         props = raw.get("properties", {})
         cfg = self.settings.tasks_db
+
+        def _as_list(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return value
+            if isinstance(value, str):
+                return [value]
+            return []
+
+        def _as_str(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict):
+                if "phone_number" in value:
+                    return value.get("phone_number")
+                if "url" in value:
+                    return value.get("url")
+                if "email" in value:
+                    return value.get("email")
+                return None
+            return str(value)
+
         return TaskRecord(
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
@@ -143,17 +168,17 @@ class TaskService:
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,
             project_id=props.get(cfg.relation_property) if cfg.relation_property else None,
             project_title=props.get("Project Title"),
-            contexts=props.get(cfg.contexts_property, []) if cfg.contexts_property else [],
-            assigned_to=props.get(cfg.assigned_property, []) if cfg.assigned_property else [],
-            tags=props.get(cfg.tags_property, []) if cfg.tags_property else [],
-            source_url=props.get(cfg.url_property) if cfg.url_property else None,
+            contexts=_as_list(props.get(cfg.contexts_property)) if cfg.contexts_property else [],
+            assigned_to=_as_list(props.get(cfg.assigned_property)) if cfg.assigned_property else [],
+            tags=_as_list(props.get(cfg.tags_property)) if cfg.tags_property else [],
+            source_url=_as_str(props.get(cfg.url_property)) if cfg.url_property else None,
             notes=props.get(cfg.notes_property) if cfg.notes_property else None,
-            phone=props.get(cfg.phone_property) if cfg.phone_property else None,
+            phone=_as_str(props.get(cfg.phone_property)) if cfg.phone_property else None,
             budget=props.get(cfg.budget_property) if cfg.budget_property else None,
             goal_id=props.get(cfg.goal_property) if cfg.goal_property else None,
             parent_id=props.get(cfg.parent_property) if cfg.parent_property else None,
-            dependency_of_ids=props.get(cfg.dependency_of_property, []) if cfg.dependency_of_property else [],
-            depends_on_ids=props.get(cfg.depends_on_property, []) if cfg.depends_on_property else [],
+            dependency_of_ids=_as_list(props.get(cfg.dependency_of_property)) if cfg.dependency_of_property else [],
+            depends_on_ids=_as_list(props.get(cfg.depends_on_property)) if cfg.depends_on_property else [],
             score=props.get(cfg.score_property) if cfg.score_property else None,
             ai_cost=props.get(cfg.ai_cost_property) if cfg.ai_cost_property else None,
             raw=raw,

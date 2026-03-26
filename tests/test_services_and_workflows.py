@@ -99,6 +99,29 @@ def test_task_creation_mapping():
     assert raw["properties"][settings.tasks_db.importance_property] == 100
 
 
+def test_task_record_mapping_coerces_empty_people_relation_phone_shapes():
+    settings, _, projects, matching, tasks, *_ = build_context()
+    raw = {
+        "id": "task-raw-1",
+        "title": "Fallback title",
+        "properties": {
+            settings.tasks_db.title_property: "Mapped title",
+            settings.tasks_db.contexts_property: None,
+            settings.tasks_db.assigned_property: {"id": "abc", "type": "people", "people": []},
+            settings.tasks_db.phone_property: {"id": "xyz", "type": "phone_number", "phone_number": None},
+            settings.tasks_db.dependency_of_property: None,
+            settings.tasks_db.depends_on_property: None,
+        },
+    }
+    mapped = tasks._to_record(raw)
+    assert mapped.title == "Mapped title"
+    assert mapped.contexts == []
+    assert mapped.assigned_to == []
+    assert mapped.phone is None
+    assert mapped.dependency_of_ids == []
+    assert mapped.depends_on_ids == []
+
+
 def test_project_matching_ambiguous():
     _, _, projects, matching, *_ = build_context()
     projects.create_project(ProjectCreateInput(title="Alpha Website", area_id="area-1"))
