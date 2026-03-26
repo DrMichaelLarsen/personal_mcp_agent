@@ -3,24 +3,270 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import httpx
+
 
 class NotionClient:
     """Thin wrapper over Notion operations."""
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key
+        self.base_url = "https://api.notion.com/v1"
+        self.version = "2022-06-28"
+
+    def _headers(self) -> dict[str, str]:
+        if not self.api_key:
+            raise RuntimeError("Notion API key is not configured. Set PPMCP_NOTION_API_KEY.")
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Notion-Version": self.version,
+            "Content-Type": "application/json",
+        }
+
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        with httpx.Client(timeout=30.0) as client:
+            response = client.request(method, url, headers=self._headers(), json=payload)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text
+            raise RuntimeError(f"Notion API error {exc.response.status_code} on {path}: {detail}") from exc
+        return response.json()
+
+    def _encode_property(self, name: str, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {"rich_text": []}
+        if isinstance(value, bool):
+            return {"checkbox": value}
+        if isinstance(value, int | float):
+            return {"number": value}
+        if isinstance(value, list):
+            if value and all(isinstance(item, str) for item in value):
+                return {"multi_select": [{"name": item} for item in value]}
+            return {"rich_text": [{"type": "text", "text": {"content": str(value)}}]}
+        if isinstance(value, str):
+            stripped = value.strip()
+            lower_name = name.lower()
+            if lower_name.endswith("url") or lower_name == "url":
+                return {"url": stripped}
+            if re.match(r"^\d{4}-\d{2}-\d{2}(t\d{2}:\d{2}(:\d{2})?)?", stripped, re.IGNORECASE):
+                return {"date": {"start": stripped}}
+            if lower_name in {"project", "area", "parent project", "parent area"}:
+                return {"relation": [{"id": stripped}]}
+            if lower_name in {"status", "state"}:
+                return {"status": {"name": stripped}}
+            if lower_name in {"priority"}:
+                return {"select": {"name": stripped}}
+            if len(stripped) <= 150:
+                return {"title": [{"type": "text", "text": {"content": stripped}}]}
+            return {"rich_text": [{"type": "text", "text": {"content": stripped[:2000]}}]}
+        return {"rich_text": [{"type": "text", "text": {"content": str(value)}}]}
+
+    def _encode_properties(self, properties: dict[str, Any]) -> dict[str, Any]:
+        return {key: self._encode_property(key, value) for key, value in properties.items() if key}
+
+    def _normalize_property(self, value: dict[str, Any]) -> Any:
+        ptype = value.get("type")
+        if not ptype:
+            if "title" in value:
+                ptype = "title"
+            elif "rich_text" in value:
+                ptype = "rich_text"
+            elif "status" in value:
+                ptype = "status"
+            elif "select" in value:
+                ptype = "select"
+            elif "multi_select" in value:
+                ptype = "multi_select"
+            elif "relation" in value:
+                ptype = "relation"
+            elif "date" in value:
+                ptype = "date"
+            elif "number" in value:
+                ptype = "number"
+            elif "checkbox" in value:
+                ptype = "checkbox"
+            elif "url" in value:
+                ptype = "url"
+
+        if ptype == "title":
+            parts = value.get("title", [])
+            return "".join(part.get("plain_text", "") for part in parts)
+        if ptype == "rich_text":
+            parts = value.get("rich_text", [])
+            return "".join(part.get("plain_text", "") for part in parts)
+        if ptype == "status":
+            status = value.get("status")
+            return (status or {}).get("name")
+        if ptype == "select":
+            sel = value.get("select")
+            return (sel or {}).get("name")
+        if ptype == "multi_select":
+            return [item.get("name") for item in value.get("multi_select", []) if item.get("name")]
+        if ptype == "relation":
+            ids = [item.get("id") for item in value.get("relation", []) if item.get("id")]
+            if len(ids) == 1:
+                return ids[0]
+            return ids
+        if ptype == "date":
+            date_value = value.get("date")
+            return (date_value or {}).get("start")
+        if ptype == "number":
+            return value.get("number")
+        if ptype == "checkbox":
+            return value.get("checkbox")
+        if ptype == "url":
+            return value.get("url")
+        return value
+
+    def _normalize_page(self, raw: dict[str, Any]) -> dict[str, Any]:
+        props = raw.get("properties", {})
+        normalized_props = {key: self._normalize_property(value) for key, value in props.items()}
+        title = ""
+        for value in props.values():
+            if value.get("type") == "title":
+                title = "".join(part.get("plain_text", "") for part in value.get("title", []))
+                break
+        return {
+            "id": raw.get("id"),
+            "url": raw.get("url"),
+            "title": title,
+            "properties": normalized_props,
+        }
 
     def create_page(self, database_id: str, properties: dict[str, Any], children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        raise NotImplementedError("Implement Notion page creation with your preferred client.")
+        payload: dict[str, Any] = {
+            "parent": {"database_id": database_id},
+            "properties": self._encode_properties(properties),
+        }
+        if children:
+            payload["children"] = self._encode_blocks(children)
+        raw = self._request("POST", "/pages", payload)
+        normalized = self._normalize_page(raw)
+        if children:
+            normalized["children"] = children
+        return normalized
 
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("Implement Notion page update with your preferred client.")
+        payload = {"properties": self._encode_properties(properties)}
+        raw = self._request("PATCH", f"/pages/{page_id}", payload)
+        return self._normalize_page(raw)
 
     def get_page(self, page_id: str) -> dict[str, Any]:
-        raise NotImplementedError("Implement Notion page fetch with your preferred client.")
+        raw = self._request("GET", f"/pages/{page_id}")
+        return self._normalize_page(raw)
 
     def query_database(self, database_id: str, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        raise NotImplementedError("Implement Notion database query with your preferred client.")
+        payload: dict[str, Any] = {}
+        if filters:
+            query_text = filters.get("query")
+            if isinstance(query_text, str) and query_text.strip():
+                payload["filter"] = {
+                    "or": [
+                        {
+                            "property": "Name",
+                            "title": {"contains": query_text},
+                        }
+                    ]
+                }
+            else:
+                and_filters: list[dict[str, Any]] = []
+                for prop, value in filters.items():
+                    if prop == "query" or value is None:
+                        continue
+                    if isinstance(value, str):
+                        if re.match(r"^\d{4}-\d{2}-\d{2}", value):
+                            and_filters.append({"property": prop, "date": {"equals": value}})
+                        else:
+                            and_filters.append(
+                                {
+                                    "or": [
+                                        {"property": prop, "rich_text": {"equals": value}},
+                                        {"property": prop, "title": {"equals": value}},
+                                        {"property": prop, "select": {"equals": value}},
+                                        {"property": prop, "status": {"equals": value}},
+                                    ]
+                                }
+                            )
+                    elif isinstance(value, bool):
+                        and_filters.append({"property": prop, "checkbox": {"equals": value}})
+                    elif isinstance(value, int | float):
+                        and_filters.append({"property": prop, "number": {"equals": value}})
+                if and_filters:
+                    payload["filter"] = {"and": and_filters}
+
+        raw = self._request("POST", f"/databases/{database_id}/query", payload)
+        return [self._normalize_page(item) for item in raw.get("results", [])]
+
+    def _encode_blocks(self, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        notion_blocks: list[dict[str, Any]] = []
+        for block in blocks:
+            btype = block.get("type", "paragraph")
+            rich = block.get("rich_text") or [{"text": block.get("text", ""), "annotations": {}}]
+            rich_text = []
+            for item in rich:
+                rich_text.append(
+                    {
+                        "type": "text",
+                        "text": {"content": item.get("text", "")[:2000]},
+                        "annotations": {
+                            "bold": item.get("annotations", {}).get("bold", False),
+                            "italic": item.get("annotations", {}).get("italic", False),
+                            "strikethrough": False,
+                            "underline": False,
+                            "code": False,
+                            "color": "default",
+                        },
+                    }
+                )
+            if btype == "callout":
+                notion_blocks.append(
+                    {
+                        "object": "block",
+                        "type": "callout",
+                        "callout": {
+                            "rich_text": rich_text,
+                            "icon": {"emoji": "💡"},
+                            "color": block.get("color", "default"),
+                        },
+                    }
+                )
+            elif btype == "to_do":
+                notion_blocks.append(
+                    {
+                        "object": "block",
+                        "type": "to_do",
+                        "to_do": {
+                            "rich_text": rich_text,
+                            "checked": bool(block.get("checked", False)),
+                            "color": "default",
+                        },
+                    }
+                )
+            elif btype in {"heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "paragraph"}:
+                notion_blocks.append(
+                    {
+                        "object": "block",
+                        "type": btype,
+                        btype: {
+                            "rich_text": rich_text,
+                            "color": "default",
+                        },
+                    }
+                )
+            else:
+                notion_blocks.append(
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": rich_text,
+                            "color": "default",
+                        },
+                    }
+                )
+        return notion_blocks
 
     def markdown_to_blocks(self, markdown: str) -> list[dict[str, Any]]:
         def _rich_text(value: str) -> list[dict[str, Any]]:
