@@ -89,7 +89,7 @@ app = FastAPI(title=settings.app_name)
 
 class ProcessSingleEmailRequest(BaseModel):
     email: EmailMessage
-    preview_only: bool = True
+    preview_only: bool = False
     confidence_threshold: float = 0.8
     mark_processed: bool = True
     create_project_if_missing: bool = False
@@ -97,7 +97,7 @@ class ProcessSingleEmailRequest(BaseModel):
 
 class ProcessInboxRequest(BaseModel):
     max_count: int = 10
-    preview_only: bool = True
+    preview_only: bool = False
     confidence_threshold: float = 0.8
     mark_processed: bool = True
     query: str | None = None

@@ -29,6 +29,13 @@ class CalendarClient:
             raise RuntimeError(f"Calendar token file not found: {token_file}. Generate OAuth token first.")
 
         creds = self._load_credentials(token_file)
+        required_scope = self.SCOPES[0]
+        granted_scopes = set(getattr(creds, "scopes", []) or [])
+        if required_scope not in granted_scopes:
+            raise RuntimeError(
+                "Calendar token is missing required scope 'https://www.googleapis.com/auth/calendar'. "
+                "If reusing a Gmail token, regenerate OAuth token with calendar scope included."
+            )
         if not creds.valid:
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
@@ -65,7 +72,10 @@ class CalendarClient:
             "end": {"dateTime": payload.get("end")},
             "extendedProperties": {"private": {k: str(v) for k, v in (payload.get("metadata") or {}).items() if v is not None}},
         }
-        created = service.events().insert(calendarId=calendar_id, body=body).execute()
+        try:
+            created = service.events().insert(calendarId=calendar_id, body=body).execute()
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(f"Google Calendar insert failed for calendar_id='{calendar_id}': {exc}") from exc
         return CalendarEvent(
             id=created.get("id", ""),
             title=created.get("summary", payload.get("title", "")),

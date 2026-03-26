@@ -33,31 +33,45 @@ def classify_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState
         body = email.body.lower()
         subject = email.subject.lower()
         normalized_labels = {label.strip().lower() for label in email.labels}
+        has_rigid_time_signal = any(
+            keyword in body or keyword in subject
+            for keyword in ["meeting", "zoom", "teams", "calendar invite", "call at", "meet at", "scheduled at", "appointment"]
+        )
+        has_task_signal = any(
+            keyword in body or keyword in subject
+            for keyword in ["todo", "task", "follow up", "action", "please", "review", "reply", "send", "deadline", "due", "asap"]
+        )
         if "task" in normalized_labels and "note" in normalized_labels:
             category = "task+note"
             score = 0.95
         elif "event" in normalized_labels and "task" in normalized_labels:
             category = "event+task"
             score = 0.95
-        elif "event" in normalized_labels:
-            category = "event"
+        elif "todo" in normalized_labels and has_rigid_time_signal:
+            category = "event+task"
             score = 0.95
+        elif "todo" in normalized_labels:
+            category = "task"
+            score = 0.97
+        elif "event" in normalized_labels:
+            category = "event" if has_rigid_time_signal else "task"
+            score = 0.93 if has_rigid_time_signal else 0.88
         elif "task" in normalized_labels:
             category = "task"
             score = 0.95
         elif "note" in normalized_labels:
             category = "note"
             score = 0.95
-        elif any(keyword in body or keyword in subject for keyword in ["meeting", "call", "schedule"]):
+        elif has_rigid_time_signal and has_task_signal:
+            category = "event+task"
+            score = 0.86
+        elif has_rigid_time_signal:
             category = "event"
             score = 0.82
         elif any(keyword in body or keyword in subject for keyword in ["note", "reference", "fyi"]):
             category = "note"
             score = 0.78
-        elif any(
-            keyword in body or keyword in subject
-            for keyword in ["todo", "task", "follow up", "action", "please", "review", "reply", "send"]
-        ):
+        elif has_task_signal:
             category = "task"
             score = 0.86
         else:
@@ -102,7 +116,14 @@ def _build_structured_content(email_subject: str, email_sender: str, email_body:
         f"{safe_body}\n"
         "```"
     )
-    full_markdown = "\n\n".join([summary_markdown, emphasis_markdown, outline_markdown, action_items_markdown, events_markdown, original_email_markdown])
+    quick_links_markdown = "## Quick Links\n\n" + "\n".join(
+        [
+            "- Gmail message: use source URL if provided in task metadata.",
+            f"- Sender: {email_sender}",
+            f"- Subject: {email_subject}",
+        ]
+    )
+    full_markdown = "\n\n".join([summary_markdown, emphasis_markdown, outline_markdown, action_items_markdown, events_markdown, quick_links_markdown, original_email_markdown])
     return EmailStructuredContent(
         summary_markdown=summary_markdown,
         action_items_markdown=action_items_markdown,
