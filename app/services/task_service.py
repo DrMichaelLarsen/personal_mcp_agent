@@ -50,8 +50,6 @@ class TaskService:
         if data.ai_cost_summary:
             notes_value = f"{notes_value}\n\n{data.ai_cost_summary}" if notes_value else data.ai_cost_summary
 
-        notes_property_value = notes_value if cfg.store_content_in_property else None
-
         properties = {
             cfg.title_property: data.title,
             cfg.status_property: data.status or cfg.default_status,
@@ -63,7 +61,6 @@ class TaskService:
             cfg.contexts_property: data.contexts,
             cfg.assigned_property: data.assigned_to,
             cfg.url_property: data.source_url,
-            cfg.notes_property: notes_property_value,
             cfg.tags_property: data.tags,
             cfg.phone_property: data.phone,
             cfg.budget_property: data.budget,
@@ -99,7 +96,6 @@ class TaskService:
                 cfg.estimate_property: data.estimated_minutes,
                 cfg.importance_property: data.importance,
                 cfg.assigned_property: data.assigned_to,
-                cfg.notes_property: data.notes,
                 cfg.tags_property: data.tags,
                 cfg.status_property: data.status,
                 cfg.relation_property: data.project_id,
@@ -160,6 +156,38 @@ class TaskService:
                 return None
             return str(value)
 
+        def _notes_from_children() -> str | None:
+            children = raw.get("children") or []
+            if not isinstance(children, list):
+                return None
+            lines: list[str] = []
+            for block in children:
+                if not isinstance(block, dict):
+                    continue
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    block_type = block.get("type")
+                    if block_type == "heading_1":
+                        lines.append(f"# {text}")
+                    elif block_type == "heading_2":
+                        lines.append(f"## {text}")
+                    elif block_type == "heading_3":
+                        lines.append(f"### {text}")
+                    elif block_type == "to_do":
+                        checked = bool(block.get("checked", False))
+                        lines.append(f"- [{'x' if checked else ' '}] {text}")
+                    elif block_type == "bulleted_list_item":
+                        lines.append(f"- {text}")
+                    elif block_type == "numbered_list_item":
+                        lines.append(f"1. {text}")
+                    else:
+                        lines.append(text)
+            return "\n".join(lines) if lines else None
+
+        notes_value = props.get(cfg.notes_property) if cfg.notes_property else None
+        if not notes_value:
+            notes_value = _notes_from_children()
+
         return TaskRecord(
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
@@ -174,7 +202,7 @@ class TaskService:
             assigned_to=_as_list(props.get(cfg.assigned_property)) if cfg.assigned_property else [],
             tags=_as_list(props.get(cfg.tags_property)) if cfg.tags_property else [],
             source_url=_as_str(props.get(cfg.url_property)) if cfg.url_property else None,
-            notes=props.get(cfg.notes_property) if cfg.notes_property else None,
+            notes=notes_value,
             phone=_as_str(props.get(cfg.phone_property)) if cfg.phone_property else None,
             budget=props.get(cfg.budget_property) if cfg.budget_property else None,
             goal_id=props.get(cfg.goal_property) if cfg.goal_property else None,
