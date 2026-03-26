@@ -325,16 +325,26 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         if classification.category in {"note", "task+note"} and email.id in note_candidates:
             candidate = note_candidates[email.id]
             content_with_attachments = _append_attachment_links(candidate.content or "", attachment_links)
-            created_note = note_service.create_note(
-                NoteCreateInput(
-                    title=candidate.title,
-                    content=content_with_attachments,
-                    project_id=selected_project_id,
-                    source_email_id=email.id,
+            try:
+                created_note = note_service.create_note(
+                    NoteCreateInput(
+                        title=candidate.title,
+                        content=content_with_attachments,
+                        project_id=selected_project_id,
+                        source_email_id=email.id,
+                    )
                 )
-            )
-            if preview_only:
-                created_note.created = False
+                if preview_only:
+                    created_note.created = False
+            except Exception as exc:
+                review_items.append(
+                    {
+                        "item_type": "note_creation",
+                        "reason": f"Note creation skipped due to schema/API error: {exc}",
+                        "options": [{"email_id": email.id, "note_title": candidate.title}],
+                        "confidence": build_confidence(0.35, "Note creation failed and was skipped.", True).model_dump(),
+                    }
+                )
 
         if classification.category in {"event", "event+task"} and email.id in event_candidates:
             candidate = event_candidates[email.id]

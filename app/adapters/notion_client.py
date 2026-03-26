@@ -213,6 +213,10 @@ class NotionClient:
         for key, value in properties.items():
             if not key:
                 continue
+            if expected_types is not None and key not in expected_types:
+                # Skip unmapped properties to avoid Notion validation errors when
+                # user schema differs from defaults (e.g. Notes/Source ID missing).
+                continue
             expected_type = expected_types.get(key) if expected_types else None
             prop = self._encode_property(
                 key,
