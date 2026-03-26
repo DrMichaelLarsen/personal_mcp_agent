@@ -103,6 +103,29 @@ class LLMConfig(BaseModel):
     cost_ledger_path: str = "data/ai_costs.jsonl"
 
 
+class SenderRoutingRule(BaseModel):
+    sender: str
+    area_contains: list[str] = Field(default_factory=list)
+    project_contains: list[str] = Field(default_factory=list)
+    score_bonus: float = 0.2
+
+
+class DomainRoutingRule(BaseModel):
+    domain: str
+    area_contains: list[str] = Field(default_factory=list)
+    project_contains: list[str] = Field(default_factory=list)
+    score_bonus: float = 0.15
+
+
+class ProjectRoutingConfig(BaseModel):
+    sender_rules: list[SenderRoutingRule] = Field(default_factory=list)
+    domain_rules: list[DomainRoutingRule] = Field(default_factory=list)
+    lexical_weight: float = 0.65
+    profile_weight: float = 0.25
+    sender_bias_weight: float = 1.0
+    max_sender_bonus: float = 0.35
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="PPMCP_",
@@ -119,6 +142,7 @@ class Settings(BaseSettings):
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     attachments: AttachmentConfig = Field(default_factory=AttachmentConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    project_routing: ProjectRoutingConfig = Field(default_factory=ProjectRoutingConfig)
     tasks_db: NotionDatabaseConfig = Field(default_factory=lambda: NotionDatabaseConfig(store_content_in_property=False))
     projects_db: NotionDatabaseConfig = Field(
         default_factory=lambda: NotionDatabaseConfig(default_status="Active", allowed_statuses=["Active", "On Hold", "Done"])

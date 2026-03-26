@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.config import get_settings
+from app.config import DomainRoutingRule, get_settings
 from app.adapters.llm_client import create_llm_client
 from app.services.cost_service import CostService
 from app.schemas.calendar import CalendarEvent
@@ -671,6 +671,50 @@ def test_ambiguous_project_matching_uses_cheap_llm_tier():
     assert llm.calls
     assert llm.calls[0]["model"] == settings.llm.cheap_model
     assert llm.calls[0]["operation"] == "ambiguous_match"
+
+
+def test_sender_bias_and_project_profile_help_match_project():
+    settings, notion, projects, *_ = build_context()
+    settings.areas_db.database_id = "areas-db"
+    settings.project_routing.domain_rules = [
+        DomainRoutingRule(
+            domain="hsc.utah.edu",
+            area_contains=["Residency"],
+            project_contains=["Residency"],
+            score_bonus=0.3,
+        )
+    ]
+    notion.create_page(
+        "areas-db",
+        {
+            settings.areas_db.title_property: "Residency",
+            settings.areas_db.status_property: "Active",
+            settings.areas_db.parent_property: None,
+        },
+    )
+    residency = projects.create_project(
+        ProjectCreateInput(
+            title="Residency Rotation Tracking",
+            area_name="Residency",
+            notes="Track resident duty hours, schedules, and compliance.",
+        )
+    )
+    advocate = projects.create_project(
+        ProjectCreateInput(
+            title="Advocate Payroll",
+            notes="Payroll tasks for Advocate Health.",
+        )
+    )
+    matching = MatchingService(settings)
+    result = matching.match_project(
+        "submit residency duty hours",
+        projects.list_projects(),
+        metadata={"sender": "michael.e.larsen@hsc.utah.edu"},
+    )
+    assert result.matched is True
+    assert result.selected_project is not None
+    assert result.selected_project.id == residency.id
+    assert result.selected_project.id != advocate.id
 
 
 def test_llm_factory_selects_gemini_provider():

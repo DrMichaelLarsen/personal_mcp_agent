@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from app.adapters.llm_client import LLMClient
 from app.config import Settings
@@ -18,14 +19,98 @@ class MatchingService:
         self.cost_service = cost_service
 
     def match_project(self, query: str, projects: list[ProjectRecord], metadata: dict | None = None) -> ProjectMatchResult:
+        sender = (metadata or {}).get("sender", "")
+        query_norm = query.strip().lower()
+
+        @dataclass
+        class _ScoredProject:
+            project: ProjectRecord
+            lexical: float
+            profile: float
+            sender_bonus: float
+            combined: float
+
+        def _profile_text(project: ProjectRecord) -> str:
+            return " | ".join(
+                [
+                    project.title,
+                    project.description or "",
+                    project.area_path or "",
+                    project.project_path or "",
+                    " ".join(project.tags),
+                ]
+            )
+
+        def _sender_bias(project: ProjectRecord, sender_value: str) -> float:
+            if not sender_value:
+                return 0.0
+            sender_norm = sender_value.strip().lower()
+            _, _, sender_domain = sender_norm.partition("@")
+            bonus = 0.0
+            routing = self.settings.project_routing
+            haystack = " ".join([(project.area_path or "").lower(), (project.project_path or "").lower(), project.title.lower(), (project.description or "").lower()])
+            for rule in routing.sender_rules:
+                if sender_norm != rule.sender.strip().lower():
+                    continue
+                if rule.area_contains and not any(token.lower() in (project.area_path or "").lower() for token in rule.area_contains):
+                    continue
+                if rule.project_contains and not any(token.lower() in haystack for token in rule.project_contains):
+                    continue
+                bonus += rule.score_bonus
+            if sender_domain:
+                for rule in routing.domain_rules:
+                    if sender_domain != rule.domain.strip().lower().lstrip("@"):
+                        continue
+                    if rule.area_contains and not any(token.lower() in (project.area_path or "").lower() for token in rule.area_contains):
+                        continue
+                    if rule.project_contains and not any(token.lower() in haystack for token in rule.project_contains):
+                        continue
+                    bonus += rule.score_bonus
+            return min(routing.max_sender_bonus, bonus)
+
+        routing = self.settings.project_routing
+        scored_projects: list[_ScoredProject] = []
+        for project in projects:
+            lexical = similarity(query, project.title)
+            title_norm = project.title.strip().lower()
+            if title_norm and (title_norm in query_norm or query_norm in title_norm):
+                lexical = max(lexical, 0.92)
+            profile = similarity(query, _profile_text(project))
+            sender_bonus = _sender_bias(project, sender)
+            combined = (
+                routing.lexical_weight * lexical
+                + routing.profile_weight * profile
+                + routing.sender_bias_weight * sender_bonus
+            )
+            scored_projects.append(
+                _ScoredProject(
+                    project=project,
+                    lexical=round(lexical, 3),
+                    profile=round(profile, 3),
+                    sender_bonus=round(sender_bonus, 3),
+                    combined=round(combined, 3),
+                )
+            )
+
+        scored_projects.sort(key=lambda item: item.combined, reverse=True)
         scored = sorted(
-            [ProjectMatchCandidate(id=p.id, title=p.title, score=round(similarity(query, p.title), 3)) for p in projects],
+            [ProjectMatchCandidate(id=item.project.id, title=item.project.title, score=item.combined) for item in scored_projects],
             key=lambda item: item.score,
             reverse=True,
         )
         if not scored:
             confidence = build_confidence(0.0, "No projects available for matching.", True)
             return ProjectMatchResult(matched=False, candidates=[], confidence=confidence)
+
+        direct_title_matches = [item for item in scored_projects if item.project.title.strip().lower() and item.project.title.strip().lower() in query_norm]
+        if len(direct_title_matches) == 1:
+            selected = direct_title_matches[0].project
+            return ProjectMatchResult(
+                matched=True,
+                selected_project=selected,
+                candidates=scored[:3],
+                confidence=build_confidence(max(0.9, direct_title_matches[0].combined), f"Direct title token match for '{selected.title}'.", False),
+            )
 
         best = scored[0]
         second = scored[1] if len(scored) > 1 else None
@@ -35,7 +120,16 @@ class MatchingService:
                 matched=True,
                 selected_project=selected,
                 candidates=scored[:3],
-                confidence=build_confidence(best.score, f"Matched project '{selected.title}' from fuzzy name lookup.", False),
+                confidence=build_confidence(best.score, f"Matched project '{selected.title}' using title/profile/sender signals.", False),
+            )
+
+        if best.score >= self.settings.confidence.review_required and (second is None or best.score - second.score >= 0.12):
+            selected = next(project for project in projects if project.id == best.id)
+            return ProjectMatchResult(
+                matched=True,
+                selected_project=selected,
+                candidates=scored[:3],
+                confidence=build_confidence(best.score, f"Matched project '{selected.title}' with moderate confidence and clear lead.", False),
             )
 
         review = ReviewItem(
@@ -46,7 +140,21 @@ class MatchingService:
         )
 
         if self._can_use_ambiguous_llm() and scored:
-            llm_selected = self._llm_select_best(query, [candidate.title for candidate in scored[:5]], metadata=metadata)
+            option_payload = [
+                {
+                    "title": item.project.title,
+                    "area_path": item.project.area_path,
+                    "project_path": item.project.project_path,
+                    "description": item.project.description,
+                    "score": item.combined,
+                }
+                for item in scored_projects[:5]
+            ]
+            llm_selected = self._llm_select_best(
+                query,
+                [candidate.title for candidate in scored[:5]],
+                metadata={**(metadata or {}), "project_options": option_payload},
+            )
             if llm_selected:
                 selected = next((project for project in projects if project.title == llm_selected), None)
                 if selected:

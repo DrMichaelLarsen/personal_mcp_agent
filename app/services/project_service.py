@@ -55,6 +55,23 @@ class ProjectService:
     def list_projects(self) -> list[ProjectRecord]:
         cfg = self.settings.projects_db
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
+        area_lookup = {area.id: area.path for area in self.list_areas()}
+        by_id = {item.id: item for item in items}
+
+        def _project_path(project: ProjectRecord) -> str:
+            parts = [project.title]
+            seen = {project.id}
+            parent_id = project.parent_project_id
+            while parent_id and parent_id in by_id and parent_id not in seen:
+                seen.add(parent_id)
+                parent = by_id[parent_id]
+                parts.append(parent.title)
+                parent_id = parent.parent_project_id
+            return " / ".join(reversed(parts))
+
+        for item in items:
+            item.area_path = area_lookup.get(item.area_id) if item.area_id else None
+            item.project_path = _project_path(item)
         return sorted(items, key=lambda item: item.score or 0, reverse=True)
 
     def list_active_projects(self) -> list[ProjectRecord]:
@@ -187,6 +204,7 @@ class ProjectService:
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
+            description=props.get(cfg.notes_property) if cfg.notes_property else None,
             area_id=_as_single_id(props.get(cfg.area_property)) if cfg.area_property else None,
             parent_project_id=_as_single_id(props.get(cfg.parent_project_property)) if cfg.parent_project_property else None,
             target_deadline=props.get(cfg.target_deadline_property) if cfg.target_deadline_property else None,

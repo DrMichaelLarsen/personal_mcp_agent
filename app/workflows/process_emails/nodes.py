@@ -465,7 +465,11 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         analysis = analyses.get(email.id)
         token = (analysis.suggested_project_name if analysis and analysis.suggested_project_name else email.subject.split(":")[0]).strip()
         if token:
-            matches[email.id] = matching_service.match_project(token, projects, metadata={"email_id": email.id})
+            matches[email.id] = matching_service.match_project(
+                token,
+                projects,
+                metadata={"email_id": email.id, "sender": email.sender},
+            )
         requested_contexts = _infer_requested_contexts(email.subject, email.body, analysis)
         matched_contexts, context_reviews = matching_service.match_contexts(requested_contexts, contexts, metadata={"email_id": email.id})
         if not matched_contexts and contexts:

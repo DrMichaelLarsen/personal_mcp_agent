@@ -26,8 +26,11 @@ class ProjectRecord(BaseModel):
     id: str
     title: str
     status: str | None = None
+    description: str | None = None
     area_id: str | None = None
+    area_path: str | None = None
     parent_project_id: str | None = None
+    project_path: str | None = None
     target_deadline: str | None = None
     importance: int | None = None
     priority: bool | None = None
