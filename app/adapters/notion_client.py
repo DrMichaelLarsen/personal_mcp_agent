@@ -502,20 +502,35 @@ class NotionClient:
 
     def markdown_to_blocks(self, markdown: str) -> list[dict[str, Any]]:
         def _rich_text(value: str) -> list[dict[str, Any]]:
+            def _parse_emphasis_and_urls(segment: str) -> list[dict[str, Any]]:
+                chunks: list[dict[str, Any]] = []
+                pattern = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|https?://[^\s)\]>\"]+)")
+                cursor = 0
+                for match in pattern.finditer(segment):
+                    if match.start() > cursor:
+                        chunks.append({"text": segment[cursor:match.start()], "annotations": {}})
+                    token = match.group(0)
+                    if token.startswith("**") and token.endswith("**"):
+                        chunks.append({"text": token[2:-2], "annotations": {"bold": True}})
+                    elif token.startswith("*") and token.endswith("*"):
+                        chunks.append({"text": token[1:-1], "annotations": {"italic": True}})
+                    else:
+                        chunks.append({"text": token, "annotations": {}, "link": token})
+                    cursor = match.end()
+                if cursor < len(segment):
+                    chunks.append({"text": segment[cursor:], "annotations": {}})
+                return chunks
+
             parts: list[dict[str, Any]] = []
-            pattern = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*)")
+            link_pattern = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
             cursor = 0
-            for match in pattern.finditer(value):
+            for match in link_pattern.finditer(value):
                 if match.start() > cursor:
-                    parts.append({"text": value[cursor:match.start()], "annotations": {}})
-                token = match.group(0)
-                if token.startswith("**") and token.endswith("**"):
-                    parts.append({"text": token[2:-2], "annotations": {"bold": True}})
-                elif token.startswith("*") and token.endswith("*"):
-                    parts.append({"text": token[1:-1], "annotations": {"italic": True}})
+                    parts.extend(_parse_emphasis_and_urls(value[cursor:match.start()]))
+                parts.append({"text": match.group(1), "annotations": {}, "link": match.group(2)})
                 cursor = match.end()
             if cursor < len(value):
-                parts.append({"text": value[cursor:], "annotations": {}})
+                parts.extend(_parse_emphasis_and_urls(value[cursor:]))
             return parts or [{"text": value, "annotations": {}}]
 
         blocks: list[dict[str, Any]] = []

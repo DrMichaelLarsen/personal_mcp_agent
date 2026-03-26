@@ -73,6 +73,25 @@ def _build_event_description(email_sender: str, email_body: str, analysis: Email
     return "\n".join(lines).strip()
 
 
+def _build_calendar_template_link(
+    *,
+    title: str,
+    details: str,
+    location: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> str:
+    params = {
+        "action": "TEMPLATE",
+        "text": title,
+        "details": details,
+        "location": location,
+    }
+    if start and end:
+        params["dates"] = f"{start.replace('-', '').replace(':', '')}/{end.replace('-', '').replace(':', '')}"
+    return f"https://calendar.google.com/calendar/render?{urlencode(params)}"
+
+
 def fetch_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     email_service = deps["email_service"]
     request = deps["request"]
@@ -166,18 +185,35 @@ def _build_structured_content(email_subject: str, email_sender: str, email_body:
     outline_markdown = "## Outline\n\n" + "\n".join(f"- {item}" for item in outline_items)
     action_items = analysis.action_items or [EmailTaskItem(text="No clear action items extracted.")]
     action_items_markdown = "## Action Items\n\n" + "\n".join(f"- [ ] {item.text}" for item in action_items)
-    event_items = list(analysis.event_hints or [])
-    if analysis.event_start and analysis.event_end:
-        dates = f"{analysis.event_start.replace('-', '').replace(':', '')}/{analysis.event_end.replace('-', '').replace(':', '')}"
-        params = {
-            "action": "TEMPLATE",
-            "text": analysis.suggested_title or email_subject,
-            "dates": dates,
-            "details": analysis.event_description or f"From: {email_sender}",
-            "location": analysis.event_location or "",
-        }
-        calendar_link = f"https://calendar.google.com/calendar/render?{urlencode(params)}"
-        event_items.append(f"Add to Google Calendar: {calendar_link}")
+    event_items = []
+    join_links = _extract_join_links(email_body)
+    base_details = (analysis.event_description or "").strip() or f"From: {email_sender}"
+    if join_links:
+        base_details = base_details + "\n\nJoin links:\n" + "\n".join(f"- {link}" for link in join_links)
+
+    for hint in (analysis.event_hints or []):
+        hint_title = hint.strip() or (analysis.suggested_title or email_subject)
+        link = _build_calendar_template_link(
+            title=hint_title,
+            details=base_details,
+            location=analysis.event_location or "",
+            # Use extracted time window if available; otherwise Google calendar
+            # opens prefilled without a fixed datetime.
+            start=analysis.event_start,
+            end=analysis.event_end,
+        )
+        event_items.append(f"{hint_title} — [Add to Google Calendar]({link})")
+
+    if not event_items and (analysis.event_start and analysis.event_end):
+        fallback_title = analysis.suggested_title or email_subject
+        fallback_link = _build_calendar_template_link(
+            title=fallback_title,
+            details=base_details,
+            location=analysis.event_location or "",
+            start=analysis.event_start,
+            end=analysis.event_end,
+        )
+        event_items.append(f"{fallback_title} — [Add to Google Calendar]({fallback_link})")
     if not event_items:
         event_items = ["No event signals extracted."]
     events_markdown = "## Events\n\n" + "\n".join(f"- {item}" for item in event_items)
