@@ -18,6 +18,8 @@ from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
+from app.adapters.calendar_client import CalendarClient
+from app.schemas.calendar import EventCreateInput
 from tests.fakes import FakeCalendarClient, FakeDriveClient, FakeGmailClient, FakeLLMClient, FakeNotionClient, make_attachment
 
 
@@ -219,6 +221,24 @@ def test_day_planning_output_structure():
     assert result.target_date == "2026-03-25"
     assert len(result.prioritized_tasks) == 2
     assert all(block.block_type == "focus" for block in result.suggested_blocks)
+
+
+def test_calendar_service_falls_back_to_preview_when_adapter_not_implemented():
+    settings = get_settings()
+    service = CalendarService(CalendarClient(), settings)
+    result = service.schedule_event(
+        EventCreateInput(
+            title="Test event",
+            start="2026-03-25T09:00:00",
+            end="2026-03-25T10:00:00",
+            dry_run=False,
+        )
+    )
+    assert result.created is False
+    assert result.dry_run is True
+    assert result.confidence.review_required is True
+    day = service.get_calendar_for_day("2026-03-25")
+    assert day.events == []
 
 
 def test_task_validation_scheduled_not_later_than_deadline():

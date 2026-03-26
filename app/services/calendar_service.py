@@ -24,11 +24,27 @@ class CalendarService:
         )
         if data.dry_run:
             return EventResult(created=False, dry_run=True, event=event, confidence=build_confidence(1.0, "Dry-run event preview.", False))
-        created = self.calendar.create_event(self.settings.calendar.calendar_id, event.model_dump())
-        return EventResult(created=True, dry_run=False, event=created, confidence=build_confidence(1.0, "Calendar event created.", False))
+        try:
+            created = self.calendar.create_event(self.settings.calendar.calendar_id, event.model_dump())
+            return EventResult(created=True, dry_run=False, event=created, confidence=build_confidence(1.0, "Calendar event created.", False))
+        except NotImplementedError:
+            return EventResult(
+                created=False,
+                dry_run=True,
+                event=event,
+                confidence=build_confidence(
+                    0.6,
+                    "Calendar adapter is not configured for live writes; returning preview event instead.",
+                    True,
+                ),
+            )
 
     def get_calendar_for_day(self, day: str) -> CalendarDayResult:
-        return CalendarDayResult(date=day, events=self.calendar.list_events_for_day(self.settings.calendar.calendar_id, day))
+        try:
+            events = self.calendar.list_events_for_day(self.settings.calendar.calendar_id, day)
+        except NotImplementedError:
+            events = []
+        return CalendarDayResult(date=day, events=events)
 
     def create_focus_block(self, task: TaskRecord, start: str, end: str, dry_run: bool = True) -> EventResult:
         title = f"Focus: {task.title}" if not task.project_title else f"Focus: {task.project_title} — {task.title}"
