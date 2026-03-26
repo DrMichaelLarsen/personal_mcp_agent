@@ -174,12 +174,21 @@ class ProjectService:
     def _to_record(self, raw: dict) -> ProjectRecord:
         props = raw.get("properties", {})
         cfg = self.settings.projects_db
+
+        def _as_single_id(value):
+            if isinstance(value, list):
+                if not value:
+                    return None
+                first = value[0]
+                return first if isinstance(first, str) else str(first)
+            return value
+
         return ProjectRecord(
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
-            area_id=props.get(cfg.area_property) if cfg.area_property else None,
-            parent_project_id=props.get(cfg.parent_project_property) if cfg.parent_project_property else None,
+            area_id=_as_single_id(props.get(cfg.area_property)) if cfg.area_property else None,
+            parent_project_id=_as_single_id(props.get(cfg.parent_project_property)) if cfg.parent_project_property else None,
             target_deadline=props.get(cfg.target_deadline_property) if cfg.target_deadline_property else None,
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,
             priority=props.get(cfg.priority_checkbox_property) if cfg.priority_checkbox_property else None,
