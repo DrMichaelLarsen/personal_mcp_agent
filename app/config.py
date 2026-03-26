@@ -69,6 +69,7 @@ class CalendarConfig(BaseModel):
     credentials_path: str | None = None
     token_path: str | None = None
     calendar_id: str = "primary"
+    timezone: str = "America/Denver"
 
 
 class AttachmentConfig(BaseModel):

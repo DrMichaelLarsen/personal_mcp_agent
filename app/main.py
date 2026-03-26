@@ -34,6 +34,7 @@ gmail_client = GmailClient(
 calendar_client = CalendarClient(
     credentials_path=settings.calendar.credentials_path,
     token_path=settings.calendar.token_path,
+    timezone=settings.calendar.timezone,
 )
 cost_service = CostService(settings.llm)
 llm_selection = create_llm_client(settings.llm, cost_service=cost_service)

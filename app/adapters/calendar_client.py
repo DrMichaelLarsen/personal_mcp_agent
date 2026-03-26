@@ -13,10 +13,35 @@ from app.schemas.calendar import CalendarEvent
 class CalendarClient:
     SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-    def __init__(self, credentials_path: str | None = None, token_path: str | None = None):
+    def __init__(self, credentials_path: str | None = None, token_path: str | None = None, timezone: str = "America/Denver"):
         self.credentials_path = credentials_path
         self.token_path = token_path
+        self.timezone = timezone
         self._service = None
+
+    def _build_datetime_payload(self, value: str) -> dict:
+        # If caller already provides offset or Z, pass through directly.
+        lower = value.lower()
+        if lower.endswith("z") or "+" in value[10:] or "-" in value[10:]:
+            return {"dateTime": value}
+        return {"dateTime": value, "timeZone": self.timezone}
+
+    def _format_google_error(self, exc: Exception) -> str:
+        parts = [repr(exc)]
+        status = getattr(exc, "status_code", None)
+        if status:
+            parts.append(f"status={status}")
+        resp = getattr(exc, "resp", None)
+        if resp is not None:
+            parts.append(f"http_status={getattr(resp, 'status', None)}")
+            parts.append(f"reason={getattr(resp, 'reason', None)}")
+        content = getattr(exc, "content", None)
+        if content:
+            try:
+                parts.append(content.decode("utf-8", errors="replace") if isinstance(content, (bytes, bytearray)) else str(content))
+            except Exception:
+                parts.append(str(content))
+        return " | ".join(part for part in parts if part and part != "None")
 
     def _get_service(self):
         if self._service is not None:
@@ -72,14 +97,15 @@ class CalendarClient:
             "summary": payload.get("title"),
             "description": payload.get("description"),
             "location": payload.get("location"),
-            "start": {"dateTime": payload.get("start")},
-            "end": {"dateTime": payload.get("end")},
+            "start": self._build_datetime_payload(payload.get("start")),
+            "end": self._build_datetime_payload(payload.get("end")),
             "extendedProperties": {"private": {k: str(v) for k, v in (payload.get("metadata") or {}).items() if v is not None}},
         }
         try:
             created = service.events().insert(calendarId=calendar_id, body=body).execute()
         except Exception as exc:  # pragma: no cover
-            raise RuntimeError(f"Google Calendar insert failed for calendar_id='{calendar_id}': {exc}") from exc
+            detail = self._format_google_error(exc)
+            raise RuntimeError(f"Google Calendar insert failed for calendar_id='{calendar_id}': {detail}") from exc
         return CalendarEvent(
             id=created.get("id", ""),
             title=created.get("summary", payload.get("title", "")),
