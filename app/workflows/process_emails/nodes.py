@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 from app.schemas.calendar import EventCreateInput
 from app.schemas.email import (
     EmailAnalysis,
@@ -112,7 +114,20 @@ def _build_structured_content(email_subject: str, email_sender: str, email_body:
     outline_markdown = "## Outline\n\n" + "\n".join(f"- {item}" for item in outline_items)
     action_items = analysis.action_items or [EmailTaskItem(text="No clear action items extracted.")]
     action_items_markdown = "## Action Items\n\n" + "\n".join(f"- [ ] {item.text}" for item in action_items)
-    event_items = analysis.event_hints or ["No event signals extracted."]
+    event_items = list(analysis.event_hints or [])
+    if analysis.event_start and analysis.event_end:
+        dates = f"{analysis.event_start.replace('-', '').replace(':', '')}/{analysis.event_end.replace('-', '').replace(':', '')}"
+        params = {
+            "action": "TEMPLATE",
+            "text": analysis.suggested_title or email_subject,
+            "dates": dates,
+            "details": analysis.event_description or f"From: {email_sender}",
+            "location": analysis.event_location or "",
+        }
+        calendar_link = f"https://calendar.google.com/calendar/render?{urlencode(params)}"
+        event_items.append(f"Add to Google Calendar: {calendar_link}")
+    if not event_items:
+        event_items = ["No event signals extracted."]
     events_markdown = "## Events\n\n" + "\n".join(f"- {item}" for item in event_items)
     original_email_markdown = (
         "## Original Email\n\n"
@@ -352,7 +367,7 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     }
                 )
 
-        if classification.category in {"event", "event+task"} and email.id in event_candidates:
+        if classification.category in {"event"} and email.id in event_candidates:
             candidate = event_candidates[email.id]
             start = candidate.start or "2099-01-01T09:00:00"
             end = candidate.end or "2099-01-01T10:00:00"
