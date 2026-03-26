@@ -248,3 +248,61 @@ The settings model uses:
 - nested separator: `__`
 
 So `PPMCP_TASKS_DB__DATABASE_ID` maps to `settings.tasks_db.database_id`.
+
+## Project routing (sender/domain + project profile)
+
+The email workflow now supports schema-aware project routing with sender/domain bias.
+
+### Add to `.env`
+
+```env
+PPMCP_PROJECT_ROUTING__LEXICAL_WEIGHT=0.65
+PPMCP_PROJECT_ROUTING__PROFILE_WEIGHT=0.25
+PPMCP_PROJECT_ROUTING__SENDER_BIAS_WEIGHT=1.0
+PPMCP_PROJECT_ROUTING__MAX_SENDER_BONUS=0.35
+
+PPMCP_PROJECT_ROUTING={"domain_rules":[{"domain":"hsc.utah.edu","area_contains":["Residency"],"project_contains":["Residency"],"score_bonus":0.3},{"domain":"aah.org","area_contains":["Advocate"],"project_contains":["Advocate"],"score_bonus":0.25}],"sender_rules":[{"sender":"michael.e.larsen@hsc.utah.edu","area_contains":["Residency"],"project_contains":["Rotation"],"score_bonus":0.35}]}
+```
+
+### Important behavior notes
+
+- `project_contains` checks against a combined project profile text that includes:
+  - title
+  - description/notes
+  - area path
+  - full project path
+  - tags
+- Domain matching is exact by sender domain.
+  - `utah.edu` does **not** match `hsc.utah.edu`
+  - Add both domains if needed.
+- Exact project title present in subject/body improves deterministic matching.
+
+### Best-practice email format
+
+Use one of these in subject/body for high-confidence routing:
+
+- `Project Alpha: follow up on ...`
+- `[Project: Residency Rotation Tracking] submit duty hours`
+- `Project: Residency Rotation Tracking` in the first lines of body
+
+### Docker/Unraid quick env snippet
+
+```env
+PPMCP_NOTION_API_KEY=secret_xxx
+PPMCP_GMAIL__CREDENTIALS_PATH=/config/secrets/google-oauth-client.json
+PPMCP_GMAIL__TOKEN_PATH=/config/secrets/gmail-token.json
+PPMCP_CALENDAR__CREDENTIALS_PATH=/config/secrets/google-oauth-client.json
+PPMCP_CALENDAR__CALENDAR_ID=primary
+
+PPMCP_TASKS_DB__DATABASE_ID=...
+PPMCP_PROJECTS_DB__DATABASE_ID=...
+PPMCP_NOTES_DB__DATABASE_ID=...
+PPMCP_AREAS_DB__DATABASE_ID=...
+PPMCP_CONTEXTS_DB__DATABASE_ID=...
+
+PPMCP_PROJECT_ROUTING__LEXICAL_WEIGHT=0.65
+PPMCP_PROJECT_ROUTING__PROFILE_WEIGHT=0.25
+PPMCP_PROJECT_ROUTING__SENDER_BIAS_WEIGHT=1.0
+PPMCP_PROJECT_ROUTING__MAX_SENDER_BONUS=0.35
+PPMCP_PROJECT_ROUTING={"domain_rules":[{"domain":"hsc.utah.edu","area_contains":["Residency"],"project_contains":["Residency"],"score_bonus":0.3}]}
+```
