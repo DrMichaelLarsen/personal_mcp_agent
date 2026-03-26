@@ -47,6 +47,7 @@ class NotionDatabaseConfig(BaseModel):
     notes_property: str | None = "Description"
     source_id_property: str | None = "Source ID"
     ai_cost_property: str | None = "ai_cost"
+    store_content_in_property: bool = True
     allowed_statuses: list[str] = Field(
         default_factory=lambda: ["To Do", "Not started", "In Progress", "Completed", "Done"]
     )
@@ -66,6 +67,7 @@ class GmailConfig(BaseModel):
 
 class CalendarConfig(BaseModel):
     credentials_path: str | None = None
+    token_path: str | None = None
     calendar_id: str = "primary"
 
 
@@ -116,7 +118,7 @@ class Settings(BaseSettings):
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     attachments: AttachmentConfig = Field(default_factory=AttachmentConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    tasks_db: NotionDatabaseConfig = Field(default_factory=NotionDatabaseConfig)
+    tasks_db: NotionDatabaseConfig = Field(default_factory=lambda: NotionDatabaseConfig(store_content_in_property=False))
     projects_db: NotionDatabaseConfig = Field(
         default_factory=lambda: NotionDatabaseConfig(default_status="Active", allowed_statuses=["Active", "On Hold", "Done"])
     )
@@ -146,6 +148,7 @@ class Settings(BaseSettings):
             importance_property=None,
             scheduled_property=None,
             deadline_property=None,
+            store_content_in_property=False,
         )
     )
     project_completed_statuses: list[str] = Field(default_factory=lambda: ["done", "complete", "completed", "archived", "canceled", "cancelled"])

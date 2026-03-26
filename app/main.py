@@ -31,7 +31,10 @@ gmail_client = GmailClient(
     credentials_path=settings.gmail.credentials_path,
     token_path=settings.gmail.token_path,
 )
-calendar_client = CalendarClient()
+calendar_client = CalendarClient(
+    credentials_path=settings.calendar.credentials_path,
+    token_path=settings.calendar.token_path,
+)
 cost_service = CostService(settings.llm)
 llm_selection = create_llm_client(settings.llm, cost_service=cost_service)
 llm_client = llm_selection.client

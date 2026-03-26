@@ -82,6 +82,7 @@ def analyze_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
 
 
 def _build_structured_content(email_subject: str, email_sender: str, email_body: str, analysis: EmailAnalysis) -> EmailStructuredContent:
+    safe_body = (email_body or "").strip() or "[No body text was available from Gmail for this message.]"
     summary_markdown = f"## Summary\n\n**Quick summary:** {analysis.summary}"
     emphasis_lines = ["> [!TIP] *Captured from email* — review and refine before final execution."]
     if analysis.event_hints:
@@ -98,7 +99,7 @@ def _build_structured_content(email_subject: str, email_sender: str, email_body:
         f"**Subject:** {email_subject}\n\n"
         f"**From:** {email_sender}\n\n"
         "```text\n"
-        f"{email_body}\n"
+        f"{safe_body}\n"
         "```"
     )
     full_markdown = "\n\n".join([summary_markdown, emphasis_markdown, outline_markdown, action_items_markdown, events_markdown, original_email_markdown])

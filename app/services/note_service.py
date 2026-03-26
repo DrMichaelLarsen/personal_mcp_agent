@@ -49,7 +49,7 @@ class NoteService:
             key: value
             for key, value in {
                 cfg.title_property: data.title,
-                cfg.notes_property: data.content,
+                cfg.notes_property: data.content if cfg.store_content_in_property else None,
                 cfg.relation_property: project_id,
                 cfg.area_property: area_id,
                 cfg.url_property: data.source_url,

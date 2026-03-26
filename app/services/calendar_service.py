@@ -27,14 +27,14 @@ class CalendarService:
         try:
             created = self.calendar.create_event(self.settings.calendar.calendar_id, event.model_dump())
             return EventResult(created=True, dry_run=False, event=created, confidence=build_confidence(1.0, "Calendar event created.", False))
-        except NotImplementedError:
+        except (NotImplementedError, RuntimeError) as exc:
             return EventResult(
                 created=False,
                 dry_run=True,
                 event=event,
                 confidence=build_confidence(
                     0.6,
-                    "Calendar adapter is not configured for live writes; returning preview event instead.",
+                    f"Calendar commit unavailable ({exc}); returning preview event instead.",
                     True,
                 ),
             )
@@ -42,7 +42,7 @@ class CalendarService:
     def get_calendar_for_day(self, day: str) -> CalendarDayResult:
         try:
             events = self.calendar.list_events_for_day(self.settings.calendar.calendar_id, day)
-        except NotImplementedError:
+        except (NotImplementedError, RuntimeError):
             events = []
         return CalendarDayResult(date=day, events=events)
 

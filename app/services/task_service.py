@@ -50,6 +50,8 @@ class TaskService:
         if data.ai_cost_summary:
             notes_value = f"{notes_value}\n\n{data.ai_cost_summary}" if notes_value else data.ai_cost_summary
 
+        notes_property_value = notes_value if cfg.store_content_in_property else None
+
         properties = {
             cfg.title_property: data.title,
             cfg.status_property: data.status or cfg.default_status,
@@ -61,7 +63,7 @@ class TaskService:
             cfg.contexts_property: data.contexts,
             cfg.assigned_property: data.assigned_to,
             cfg.url_property: data.source_url,
-            cfg.notes_property: notes_value,
+            cfg.notes_property: notes_property_value,
             cfg.tags_property: data.tags,
             cfg.phone_property: data.phone,
             cfg.budget_property: data.budget,
