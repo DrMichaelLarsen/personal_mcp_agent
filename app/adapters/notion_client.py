@@ -35,25 +35,82 @@ class NotionClient:
         return response.json()
 
     def _encode_property(self, name: str, value: Any) -> dict[str, Any]:
+        lower_name = name.lower().strip()
+
+        def _looks_like_notion_id(raw: str) -> bool:
+            return bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", raw, re.IGNORECASE))
+
         if value is None:
-            return {"rich_text": []}
+            return None
+
+        relation_like = {
+            "project",
+            "area",
+            "parent",
+            "parent project",
+            "parent area",
+            "goal",
+            "dependency_of",
+            "depends_on",
+            "contexts",
+            "context",
+        }
+        date_like = {"scheduled", "deadline", "due date", "target deadline"}
+        number_like = {"budget", "importance", "time required", "estimated minutes", "score", "ai_cost"}
+
+        if lower_name in date_like and isinstance(value, str):
+            return {"date": {"start": value}}
+
+        if lower_name in relation_like:
+            if isinstance(value, str):
+                return {"relation": [{"id": value}]} if _looks_like_notion_id(value) else {"relation": []}
+            if isinstance(value, list):
+                rels = [{"id": item} for item in value if isinstance(item, str) and _looks_like_notion_id(item)]
+                return {"relation": rels}
+            return {"relation": []}
+
+        if lower_name in {"assigned", "assignee", "owner"}:
+            if isinstance(value, str):
+                return {"people": [{"id": value}]} if _looks_like_notion_id(value) else {"people": []}
+            if isinstance(value, list):
+                ppl = [{"id": item} for item in value if isinstance(item, str) and _looks_like_notion_id(item)]
+                return {"people": ppl}
+            return {"people": []}
+
+        if lower_name in {"tags", "tag"}:
+            if isinstance(value, list):
+                return {"multi_select": [{"name": item} for item in value if isinstance(item, str) and item.strip()]}
+            if isinstance(value, str) and value.strip():
+                return {"multi_select": [{"name": value.strip()}]}
+            return {"multi_select": []}
+
+        if lower_name in {"phone", "phone number"}:
+            return {"phone_number": str(value)}
+
+        if lower_name in number_like:
+            if isinstance(value, (int, float)):
+                return {"number": value}
+            if isinstance(value, str):
+                try:
+                    return {"number": float(value)}
+                except ValueError:
+                    return None
+            return None
+
         if isinstance(value, bool):
             return {"checkbox": value}
-        if isinstance(value, int | float):
+        if isinstance(value, (int, float)):
             return {"number": value}
         if isinstance(value, list):
-            if value and all(isinstance(item, str) for item in value):
+            if all(isinstance(item, str) for item in value):
                 return {"multi_select": [{"name": item} for item in value]}
             return {"rich_text": [{"type": "text", "text": {"content": str(value)}}]}
         if isinstance(value, str):
             stripped = value.strip()
-            lower_name = name.lower()
             if lower_name.endswith("url") or lower_name == "url":
                 return {"url": stripped}
             if re.match(r"^\d{4}-\d{2}-\d{2}(t\d{2}:\d{2}(:\d{2})?)?", stripped, re.IGNORECASE):
                 return {"date": {"start": stripped}}
-            if lower_name in {"project", "area", "parent project", "parent area"}:
-                return {"relation": [{"id": stripped}]}
             if lower_name in {"status", "state"}:
                 return {"status": {"name": stripped}}
             if lower_name in {"priority"}:
@@ -64,7 +121,14 @@ class NotionClient:
         return {"rich_text": [{"type": "text", "text": {"content": str(value)}}]}
 
     def _encode_properties(self, properties: dict[str, Any]) -> dict[str, Any]:
-        return {key: self._encode_property(key, value) for key, value in properties.items() if key}
+        encoded: dict[str, Any] = {}
+        for key, value in properties.items():
+            if not key:
+                continue
+            prop = self._encode_property(key, value)
+            if prop is not None:
+                encoded[key] = prop
+        return encoded
 
     def _normalize_property(self, value: dict[str, Any]) -> Any:
         ptype = value.get("type")
