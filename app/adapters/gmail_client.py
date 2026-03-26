@@ -57,6 +57,7 @@ class GmailClient:
 
     def list_tagged_messages(self, query: str, max_count: int) -> list[EmailMessage]:
         service = self._get_service()
+        label_map = self._get_label_map(service)
         response = service.users().messages().list(userId="me", q=query, maxResults=max_count).execute()
         messages = response.get("messages", [])
         results: list[EmailMessage] = []
@@ -69,6 +70,8 @@ class GmailClient:
             headers = payload.get("headers", [])
             header_map = {header.get("name", "").lower(): header.get("value", "") for header in headers}
             body_text = self._extract_text_body(detail, service)
+            raw_label_ids = detail.get("labelIds", []) or []
+            resolved_labels = [label_map.get(label_id, label_id) for label_id in raw_label_ids]
             results.append(
                 EmailMessage(
                     id=detail.get("id", message_id),
@@ -76,10 +79,20 @@ class GmailClient:
                     subject=header_map.get("subject", "(no subject)"),
                     sender=header_map.get("from", "unknown"),
                     body=body_text,
-                    labels=detail.get("labelIds", []),
+                    labels=resolved_labels,
                 )
             )
         return results
+
+    def _get_label_map(self, service) -> dict[str, str]:
+        labels = service.users().labels().list(userId="me").execute().get("labels", [])
+        mapping: dict[str, str] = {}
+        for label in labels:
+            lid = label.get("id")
+            name = label.get("name")
+            if lid and name:
+                mapping[lid] = name
+        return mapping
 
     def mark_processed(self, email_id: str, processed_label: str) -> None:
         service = self._get_service()

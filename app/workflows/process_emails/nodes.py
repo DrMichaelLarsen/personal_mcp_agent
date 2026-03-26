@@ -41,25 +41,31 @@ def classify_emails(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState
             keyword in body or keyword in subject
             for keyword in ["todo", "task", "follow up", "action", "please", "review", "reply", "send", "deadline", "due", "asap"]
         )
-        if "task" in normalized_labels and "note" in normalized_labels:
+        has_event_tag = "event" in normalized_labels
+        has_todo_tag = "todo" in normalized_labels
+        has_task_tag = "task" in normalized_labels
+        has_note_tag = "note" in normalized_labels
+
+        # Deterministic, tag-first routing: labels are explicit user intent.
+        if has_event_tag and (has_todo_tag or has_task_tag):
+            category = "event+task"
+            score = 0.99
+        elif has_event_tag:
+            category = "event"
+            score = 0.99
+        elif has_todo_tag and has_note_tag:
+            category = "task+note"
+            score = 0.98
+        elif has_todo_tag:
+            category = "task"
+            score = 0.98
+        elif has_task_tag and has_note_tag:
             category = "task+note"
             score = 0.95
-        elif "event" in normalized_labels and "task" in normalized_labels:
-            category = "event+task"
-            score = 0.95
-        elif "todo" in normalized_labels and has_rigid_time_signal:
-            category = "event+task"
-            score = 0.95
-        elif "todo" in normalized_labels:
-            category = "task"
-            score = 0.97
-        elif "event" in normalized_labels:
-            category = "event" if has_rigid_time_signal else "task"
-            score = 0.93 if has_rigid_time_signal else 0.88
-        elif "task" in normalized_labels:
+        elif has_task_tag:
             category = "task"
             score = 0.95
-        elif "note" in normalized_labels:
+        elif has_note_tag:
             category = "note"
             score = 0.95
         elif has_rigid_time_signal and has_task_signal:

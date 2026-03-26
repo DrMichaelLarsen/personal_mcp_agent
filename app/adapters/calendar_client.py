@@ -21,10 +21,14 @@ class CalendarClient:
     def _get_service(self):
         if self._service is not None:
             return self._service
-        if not self.token_path:
-            raise RuntimeError("Calendar token path is not configured. Set PPMCP_CALENDAR__TOKEN_PATH.")
+        token_source = self.token_path or self.credentials_path
+        if not token_source:
+            raise RuntimeError(
+                "Calendar token path is not configured. Set PPMCP_CALENDAR__TOKEN_PATH "
+                "(or use PPMCP_CALENDAR__CREDENTIALS_PATH as a fallback token file path)."
+            )
 
-        token_file = Path(self.token_path)
+        token_file = Path(token_source)
         if not token_file.exists():
             raise RuntimeError(f"Calendar token file not found: {token_file}. Generate OAuth token first.")
 
