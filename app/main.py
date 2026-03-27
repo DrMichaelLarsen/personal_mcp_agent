@@ -45,7 +45,14 @@ matching_service = MatchingService(settings, llm_client=llm_client, cost_service
 task_service = TaskService(notion_client, project_service, matching_service, settings)
 note_service = NoteService(notion_client, project_service, matching_service, settings)
 calendar_service = CalendarService(calendar_client, settings)
-drive_client = DriveClient() if settings.attachments.mode == "drive_link" else None
+drive_client = (
+    DriveClient(
+        credentials_path=settings.gmail.credentials_path,
+        token_path=settings.gmail.token_path,
+    )
+    if settings.attachments.mode == "drive_link"
+    else None
+)
 email_service = EmailService(
     gmail_client,
     settings,

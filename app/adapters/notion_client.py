@@ -378,6 +378,8 @@ class NotionClient:
                 payload["children"] = chunks[0]
         raw = self._request("POST", "/pages", payload)
         if children and raw.get("id"):
+            if children_to_send is None:
+                children_to_send = []
             encoded_children = self._encode_blocks(children_to_send)
             chunks = self._chunk_blocks(encoded_children, max_blocks=100)
             for chunk in chunks[1:]:
@@ -458,10 +460,13 @@ class NotionClient:
             rich = block.get("rich_text") or [{"text": block.get("text", ""), "annotations": {}}]
             rich_text = []
             for item in rich:
+                text_payload = {"content": item.get("text", "")[:2000]}
+                if item.get("link"):
+                    text_payload["link"] = {"url": item.get("link")}
                 rich_text.append(
                     {
                         "type": "text",
-                        "text": {"content": item.get("text", "")[:2000]},
+                        "text": text_payload,
                         "annotations": {
                             "bold": item.get("annotations", {}).get("bold", False),
                             "italic": item.get("annotations", {}).get("italic", False),

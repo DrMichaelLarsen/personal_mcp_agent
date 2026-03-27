@@ -29,20 +29,43 @@ class FakeNotionClient:
 
     def markdown_to_blocks(self, markdown: str) -> list[dict]:
         def _rich_text(value: str) -> list[dict]:
+            link_pattern = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
             parts: list[dict] = []
-            pattern = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*)")
+            pattern = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|https?://[^\s)\]>\"]+)")
             cursor = 0
-            for match in pattern.finditer(value):
-                if match.start() > cursor:
-                    parts.append({"text": value[cursor:match.start()], "annotations": {}})
-                token = match.group(0)
-                if token.startswith("**") and token.endswith("**"):
-                    parts.append({"text": token[2:-2], "annotations": {"bold": True}})
-                else:
-                    parts.append({"text": token[1:-1], "annotations": {"italic": True}})
-                cursor = match.end()
-            if cursor < len(value):
-                parts.append({"text": value[cursor:], "annotations": {}})
+            linked_segments: list[dict] = []
+            base_cursor = 0
+            for match in link_pattern.finditer(value):
+                if match.start() > base_cursor:
+                    linked_segments.append({"type": "text", "value": value[base_cursor:match.start()]})
+                linked_segments.append({"type": "link", "label": match.group(1), "url": match.group(2)})
+                base_cursor = match.end()
+            if base_cursor < len(value):
+                linked_segments.append({"type": "text", "value": value[base_cursor:]})
+            if not linked_segments:
+                linked_segments = [{"type": "text", "value": value}]
+
+            for segment in linked_segments:
+                if segment["type"] == "link":
+                    parts.append({"text": segment["label"], "annotations": {}, "link": segment["url"]})
+                    continue
+                segment_value = segment["value"]
+                cursor = 0
+                local_parts: list[dict] = []
+                for match in pattern.finditer(segment_value):
+                    if match.start() > cursor:
+                        local_parts.append({"text": segment_value[cursor:match.start()], "annotations": {}})
+                    token = match.group(0)
+                    if token.startswith("**") and token.endswith("**"):
+                        local_parts.append({"text": token[2:-2], "annotations": {"bold": True}})
+                    elif token.startswith("*") and token.endswith("*"):
+                        local_parts.append({"text": token[1:-1], "annotations": {"italic": True}})
+                    else:
+                        local_parts.append({"text": token, "annotations": {}, "link": token})
+                    cursor = match.end()
+                if cursor < len(segment_value):
+                    local_parts.append({"text": segment_value[cursor:], "annotations": {}})
+                parts.extend(local_parts)
             return parts or [{"text": value, "annotations": {}}]
 
         blocks: list[dict] = []

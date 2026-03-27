@@ -402,7 +402,10 @@ def _append_attachment_links(base_markdown: str, attachment_links: list) -> str:
     lines = ["## Attachments"]
     for link in attachment_links:
         target = link.drive_url or link.notion_file_url or "(pending/manual)"
-        lines.append(f"- {link.filename} ({link.mime_type}) -> {target}")
+        if target.startswith("http://") or target.startswith("https://"):
+            lines.append(f"- [{link.filename} ({link.mime_type})]({target})")
+        else:
+            lines.append(f"- {link.filename} ({link.mime_type}) -> {target}")
     return f"{base_markdown}\n\n" + "\n".join(lines)
 
 

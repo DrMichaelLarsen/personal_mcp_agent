@@ -172,6 +172,20 @@ This has **bold** and *italic* text.
     assert any(part.get("annotations", {}).get("italic") for part in rich)
 
 
+def test_markdown_blocks_support_clickable_markdown_links_and_raw_urls():
+    from app.adapters.notion_client import NotionClient
+
+    client = NotionClient(api_key="test")
+    blocks = client.markdown_to_blocks(
+        "Open [Google](https://google.com) and https://calendar.google.com/calendar/render?action=TEMPLATE"
+    )
+    assert blocks
+    rich = blocks[0].get("rich_text", [])
+    links = [part for part in rich if part.get("link")]
+    assert any(part.get("text") == "Google" and part.get("link") == "https://google.com" for part in links)
+    assert any("calendar.google.com/calendar/render" in (part.get("link") or "") for part in links)
+
+
 def test_confidence_logic_labels():
     from app.utils.confidence import build_confidence
 
@@ -601,8 +615,43 @@ def test_email_attachments_are_added_as_drive_links_in_notes():
     assert result.results[0].created_task.task is not None
     notes_text = result.results[0].created_task.task.notes or ""
     assert "## Attachments" in notes_text
-    assert "drive.google.com" in notes_text
+    assert "[details.txt (text/plain)](https://drive.google.com/file/d/drive-1/view)" in notes_text
     assert len(drive.uploads) == 1
+
+
+def test_event_section_add_to_calendar_is_markdown_link():
+    _, _, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    workflow = ProcessEmailsWorkflow(
+        {
+            "email_service": email,
+            "matching_service": matching,
+            "project_service": projects,
+            "task_service": tasks,
+            "note_service": notes,
+            "calendar_service": calendar,
+        }
+    )
+    result = workflow.run(
+        ProcessEmailsInput(
+            preview_only=True,
+            input_emails=[
+                EmailMessage(
+                    id="event-link-1",
+                    thread_id="evt-link-1",
+                    subject="Team sync",
+                    sender="ops@example.com",
+                    body="Meeting tomorrow at 10am about roadmap",
+                    labels=["event", "task"],
+                )
+            ],
+        )
+    )
+    task = result.results[0].created_task
+    assert task is not None
+    assert task.task is not None
+    notes_text = task.task.notes or ""
+    assert "[Add to Google Calendar](https://calendar.google.com/calendar/render?" in notes_text
 
 
 def test_area_tree_is_built_with_full_paths():
