@@ -183,6 +183,7 @@ class Settings(BaseSettings):
     context_active_statuses: list[str] = Field(default_factory=lambda: ["active"])
     area_active_statuses: list[str] = Field(default_factory=lambda: ["active"])
     review_project_tag: str = "Needs Review"
+    task_inbox_processed_tag: str = "Inbox Processed"
     confidence: ConfidenceThresholds = Field(default_factory=ConfidenceThresholds)
     workday: WorkdayConfig = Field(default_factory=WorkdayConfig)
 

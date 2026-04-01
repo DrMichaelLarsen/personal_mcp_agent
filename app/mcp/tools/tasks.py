@@ -26,9 +26,10 @@ def register(server, container) -> None:
 
     @server.tool(name="process_task_inbox", description="Process Notion inbox tasks by enriching missing fields and tagging them as processed.")
     async def process_task_inbox_tool(arguments: dict):
-        return container.process_task_inbox_workflow.run(ProcessTaskInboxInput.model_validate(arguments)).model_dump()
+        payload_dict = {"processed_tag": container.settings.task_inbox_processed_tag, **arguments}
+        return container.process_task_inbox_workflow.run(ProcessTaskInboxInput.model_validate(payload_dict)).model_dump()
 
     @server.tool(name="preview_task_inbox", description="Preview inbox task enrichment without committing any writes.")
     async def preview_task_inbox_tool(arguments: dict):
-        payload = ProcessTaskInboxInput.model_validate({**arguments, "preview_only": True})
+        payload = ProcessTaskInboxInput.model_validate({"processed_tag": container.settings.task_inbox_processed_tag, **arguments, "preview_only": True})
         return container.process_task_inbox_workflow.run(payload).model_dump()
