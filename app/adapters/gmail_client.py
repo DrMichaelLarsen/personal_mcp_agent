@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import pickle
+import base64
 from pathlib import Path
 
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from app.schemas.email import EmailMessage
+from app.schemas.email import EmailAttachment, EmailMessage
 
 
 class GmailClient:
@@ -31,8 +33,16 @@ class GmailClient:
         creds = self._load_credentials(token_file)
         if not creds.valid:
             if creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                self._save_credentials(token_file, creds)
+                try:
+                    creds.refresh(Request())
+                    self._save_credentials(token_file, creds)
+                except RefreshError as exc:
+                    raise RuntimeError(
+                        "Gmail refresh token is expired/revoked (invalid_grant). "
+                        "Re-run OAuth consent and replace the token file. "
+                        "If app is in Google OAuth Testing mode, refresh tokens can expire in ~7 days. "
+                        "Move consent screen to Production for long-lived refresh tokens."
+                    ) from exc
             else:
                 raise RuntimeError("Gmail credentials are invalid and cannot be refreshed. Re-run OAuth flow.")
 
@@ -71,7 +81,7 @@ class GmailClient:
             header_map = {header.get("name", "").lower(): header.get("value", "") for header in headers}
             body_text = self._extract_text_body(detail, service)
             raw_label_ids = detail.get("labelIds", []) or []
-            resolved_labels = [label_map.get(label_id, label_id) for label_id in raw_label_ids]
+            resolved_labels = [label_map.get(label_id, label_id) or label_id for label_id in raw_label_ids]
             results.append(
                 EmailMessage(
                     id=detail.get("id", message_id),
@@ -80,9 +90,63 @@ class GmailClient:
                     sender=header_map.get("from", "unknown"),
                     body=body_text,
                     labels=resolved_labels,
+                    attachments=self._extract_attachments(detail, service),
                 )
             )
         return results
+
+    def _extract_attachments(self, detail: dict, service) -> list[EmailAttachment]:
+        root_payload = detail.get("payload", {})
+        message_id = detail.get("id", "")
+        attachments: list[EmailAttachment] = []
+
+        def _decode_bytes(data: str | None) -> bytes:
+            if not data:
+                return b""
+            padding = "=" * (-len(data) % 4)
+            return base64.urlsafe_b64decode((data + padding).encode("utf-8"))
+
+        def _walk(parts: list[dict]) -> None:
+            for part in parts:
+                filename = (part.get("filename") or "").strip()
+                body = part.get("body") or {}
+                attachment_id = body.get("attachmentId")
+                inline_data = body.get("data")
+                mime_type = part.get("mimeType") or "application/octet-stream"
+                size_bytes = int(body.get("size") or 0)
+
+                if filename:
+                    payload_bytes = b""
+                    if attachment_id:
+                        fetched = (
+                            service.users()
+                            .messages()
+                            .attachments()
+                            .get(userId="me", messageId=message_id, id=attachment_id)
+                            .execute()
+                        )
+                        payload_bytes = _decode_bytes(fetched.get("data"))
+                        size_bytes = int(fetched.get("size") or size_bytes or len(payload_bytes))
+                    elif inline_data:
+                        payload_bytes = _decode_bytes(inline_data)
+                        size_bytes = size_bytes or len(payload_bytes)
+
+                    attachments.append(
+                        EmailAttachment(
+                            attachment_id=attachment_id or f"inline-{message_id}-{len(attachments)+1}",
+                            filename=filename,
+                            mime_type=mime_type,
+                            size_bytes=size_bytes,
+                            content_b64=base64.b64encode(payload_bytes).decode("utf-8") if payload_bytes else None,
+                        )
+                    )
+
+                nested = part.get("parts") or []
+                if nested:
+                    _walk(nested)
+
+        _walk(root_payload.get("parts", []) or [])
+        return attachments
 
     def _get_label_map(self, service) -> dict[str, str]:
         labels = service.users().labels().list(userId="me").execute().get("labels", [])

@@ -578,6 +578,42 @@ def test_email_workflow_can_create_review_tagged_project_when_missing():
     assert any(item.item_type == "project_creation" for item in result.results[0].review_items)
 
 
+def test_email_workflow_creates_new_project_when_explicitly_requested_in_body():
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.contexts_db.database_id = "contexts-db"
+    notion.create_page("contexts-db", {settings.contexts_db.title_property: "Computer", settings.contexts_db.status_property: "Active"})
+    projects.create_project(ProjectCreateInput(title="Existing Project", area_id="area-1", status="Active"))
+    workflow = ProcessEmailsWorkflow(
+        {
+            "email_service": email,
+            "matching_service": matching,
+            "project_service": projects,
+            "task_service": tasks,
+            "note_service": notes,
+            "calendar_service": calendar,
+        }
+    )
+    result = workflow.run(
+        ProcessEmailsInput(
+            preview_only=False,
+            create_project_if_missing=False,
+            input_emails=[
+                EmailMessage(
+                    id="manual-new-explicit-1",
+                    thread_id="thread-new-explicit-1",
+                    subject="Status update",
+                    sender="ceo@example.com",
+                    body="This is a new project. New Project: Apollo Launch Prep. Please create tasks.",
+                    labels=["task"],
+                )
+            ],
+        )
+    )
+    created_project = result.results[0].created_project
+    assert created_project is not None
+    assert created_project.title == "Apollo Launch Prep"
+
+
 def test_email_attachments_are_added_as_drive_links_in_notes():
     settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
     settings.attachments.mode = "drive_link"

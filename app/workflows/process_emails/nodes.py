@@ -409,6 +409,32 @@ def _append_attachment_links(base_markdown: str, attachment_links: list) -> str:
     return f"{base_markdown}\n\n" + "\n".join(lines)
 
 
+def _has_explicit_new_project_intent(subject: str, body: str) -> bool:
+    text = f"{subject}\n{body}".lower()
+    signals = [
+        "this is a new project",
+        "new project",
+        "create a new project",
+        "start a new project",
+        "this should be a new project",
+    ]
+    return any(signal in text for signal in signals)
+
+
+def _extract_explicit_project_name(subject: str, body: str, fallback: str | None) -> str | None:
+    candidates = [
+        re.search(r"new\s+project\s*[:\-]\s*([^\n\r\.]{3,80})", body, re.IGNORECASE),
+        re.search(r"project\s+name\s*[:\-]\s*([^\n\r\.]{3,80})", body, re.IGNORECASE),
+        re.search(r"new\s+project\s*[:\-]\s*([^\n\r\.]{3,80})", subject, re.IGNORECASE),
+    ]
+    for match in candidates:
+        if match:
+            value = match.group(1).strip(" :-\t")
+            if value:
+                return value
+    return fallback
+
+
 def extract_candidates(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     tasks: dict[str, ExtractedTaskCandidate] = {}
     notes: dict[str, ExtractedNoteCandidate] = {}
@@ -558,19 +584,33 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         review_items.extend(state.get("context_review_items", {}).get(email.id, []))
 
         actionable = classification.category in {"task", "note", "event", "task+note", "event+task"}
+        explicit_new_project = _has_explicit_new_project_intent(email.subject, email.body)
         has_matched_project = bool(match and match.matched and match.selected_project)
-        if actionable and not has_matched_project:
-            suggested_name = (analysis.suggested_project_name if analysis else None) or email.subject.split(":")[0].strip()
+        should_create_new_project = actionable and (not has_matched_project or explicit_new_project)
+        if should_create_new_project:
+            suggested_name = _extract_explicit_project_name(
+                email.subject,
+                email.body,
+                (analysis.suggested_project_name if analysis else None) or email.subject.split(":")[0].strip(),
+            )
             if suggested_name:
                 review_item = matching_service.build_project_creation_review(suggested_name)
                 review_items.append(review_item)
-                if request.create_project_if_missing and not preview_only:
-                    created_project = project_service.create_project(
-                        ProjectCreateInput(
-                            title=suggested_name,
-                            tags=[project_service.settings.review_project_tag],
-                        )
+                can_auto_create = (request.create_project_if_missing or explicit_new_project) and not preview_only
+                if can_auto_create:
+                    existing = next(
+                        (p for p in project_service.list_active_projects() if p.title.strip().lower() == suggested_name.strip().lower()),
+                        None,
                     )
+                    if existing:
+                        created_project = existing
+                    else:
+                        created_project = project_service.create_project(
+                            ProjectCreateInput(
+                                title=suggested_name,
+                                tags=[project_service.settings.review_project_tag],
+                            )
+                        )
 
         selected_project_id = None
         if created_project:

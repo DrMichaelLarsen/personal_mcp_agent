@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from app.adapters.calendar_client import CalendarClient
@@ -170,44 +170,53 @@ async def ai_cost_summary() -> dict:
 
 @app.post("/workflows/process-email-preview")
 async def process_email_preview(payload: ProcessSingleEmailRequest) -> dict:
-    result = container.process_emails_workflow.run(
-        ProcessEmailsInput(
-            preview_only=True,
-            confidence_threshold=payload.confidence_threshold,
-            mark_processed=False,
-            input_emails=[payload.email],
-            max_count=1,
-            create_project_if_missing=False,
+    try:
+        result = container.process_emails_workflow.run(
+            ProcessEmailsInput(
+                preview_only=True,
+                confidence_threshold=payload.confidence_threshold,
+                mark_processed=False,
+                input_emails=[payload.email],
+                max_count=1,
+                create_project_if_missing=False,
+            )
         )
-    )
-    return result.model_dump()
+        return result.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/workflows/process-email")
 async def process_email(payload: ProcessSingleEmailRequest) -> dict:
-    result = container.process_emails_workflow.run(
-        ProcessEmailsInput(
-            preview_only=payload.preview_only,
-            confidence_threshold=payload.confidence_threshold,
-            mark_processed=payload.mark_processed,
-            input_emails=[payload.email],
-            max_count=1,
-            create_project_if_missing=payload.create_project_if_missing,
+    try:
+        result = container.process_emails_workflow.run(
+            ProcessEmailsInput(
+                preview_only=payload.preview_only,
+                confidence_threshold=payload.confidence_threshold,
+                mark_processed=payload.mark_processed,
+                input_emails=[payload.email],
+                max_count=1,
+                create_project_if_missing=payload.create_project_if_missing,
+            )
         )
-    )
-    return result.model_dump()
+        return result.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/workflows/process-inbox")
 async def process_inbox(payload: ProcessInboxRequest) -> dict:
-    result = container.process_emails_workflow.run(
-        ProcessEmailsInput(
-            max_count=payload.max_count,
-            preview_only=payload.preview_only,
-            confidence_threshold=payload.confidence_threshold,
-            mark_processed=payload.mark_processed,
-            query=payload.query,
-            create_project_if_missing=payload.create_project_if_missing,
+    try:
+        result = container.process_emails_workflow.run(
+            ProcessEmailsInput(
+                max_count=payload.max_count,
+                preview_only=payload.preview_only,
+                confidence_threshold=payload.confidence_threshold,
+                mark_processed=payload.mark_processed,
+                query=payload.query,
+                create_project_if_missing=payload.create_project_if_missing,
+            )
         )
-    )
-    return result.model_dump()
+        return result.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
