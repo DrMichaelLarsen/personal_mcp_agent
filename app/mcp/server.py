@@ -21,6 +21,7 @@ class ServiceContainer:
     email_service: object
     planning_service: object
     process_emails_workflow: object
+    process_task_inbox_workflow: object
     plan_day_workflow: object
     cost_service: object | None = None
 

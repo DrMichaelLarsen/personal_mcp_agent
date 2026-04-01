@@ -135,6 +135,22 @@ class TaskService:
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id, filters)]
         return [item for item in items if item.status != "Complete"]
 
+    def list_inbox_candidates(self, max_count: int = 50, include_statuses: list[str] | None = None, processed_tag: str = "Inbox Processed") -> list[TaskRecord]:
+        cfg = self.settings.tasks_db
+        include = {(item or "").strip().lower() for item in (include_statuses or ["Inbox"]) if (item or "").strip()}
+        processed_key = (processed_tag or "").strip().lower()
+        all_items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
+        candidates: list[TaskRecord] = []
+        for task in all_items:
+            status_key = (task.status or "").strip().lower()
+            if include and status_key not in include:
+                continue
+            tag_keys = {(tag or "").strip().lower() for tag in (task.tags or []) if (tag or "").strip()}
+            if processed_key and processed_key in tag_keys:
+                continue
+            candidates.append(task)
+        return candidates[: max(1, max_count)]
+
     def find_similar_open_task(self, title: str, project_id: str | None = None) -> tuple[TaskRecord | None, float]:
         def _normalize_candidate(value: str) -> str:
             lowered = value.strip()

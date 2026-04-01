@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.logging import configure_logging
 from app.mcp.server import ServiceContainer, build_mcp_server
 from app.schemas.email import EmailMessage, ProcessEmailsInput
+from app.schemas.tasks import ProcessTaskInboxInput
 from app.services.calendar_service import CalendarService
 from app.services.cost_service import CostService
 from app.services.email_service import EmailAnalysisService, EmailService
@@ -22,6 +23,7 @@ from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
+from app.workflows.process_task_inbox.graph import ProcessTaskInboxWorkflow
 
 configure_logging()
 settings = get_settings()
@@ -81,6 +83,13 @@ container = ServiceContainer(
             "cost_service": cost_service,
         }
     ),
+    process_task_inbox_workflow=ProcessTaskInboxWorkflow(
+        {
+            "task_service": task_service,
+            "project_service": project_service,
+            "matching_service": matching_service,
+        }
+    ),
     plan_day_workflow=PlanDayWorkflow(
         {
             "calendar_service": calendar_service,
@@ -110,6 +119,13 @@ class ProcessInboxRequest(BaseModel):
     mark_processed: bool = True
     query: str | None = None
     create_project_if_missing: bool = False
+
+
+class ProcessTaskInboxRequest(BaseModel):
+    max_count: int = 50
+    preview_only: bool = True
+    include_statuses: list[str] = Field(default_factory=lambda: ["Inbox"])
+    processed_tag: str = "Inbox Processed"
 
 
 @app.get("/health")
@@ -215,6 +231,22 @@ async def process_inbox(payload: ProcessInboxRequest) -> dict:
                 mark_processed=payload.mark_processed,
                 query=payload.query,
                 create_project_if_missing=payload.create_project_if_missing,
+            )
+        )
+        return result.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/workflows/process-task-inbox")
+async def process_task_inbox(payload: ProcessTaskInboxRequest) -> dict:
+    try:
+        result = container.process_task_inbox_workflow.run(
+            ProcessTaskInboxInput(
+                max_count=payload.max_count,
+                preview_only=payload.preview_only,
+                include_statuses=payload.include_statuses,
+                processed_tag=payload.processed_tag,
             )
         )
         return result.model_dump()

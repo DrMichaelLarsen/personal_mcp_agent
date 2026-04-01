@@ -9,6 +9,7 @@ from app.schemas.notes import NoteCreateInput
 from app.schemas.planning import DayPlanInput
 from app.schemas.projects import ContextRecord, ProjectCreateInput, ProjectRecord
 from app.schemas.tasks import TaskCreateInput
+from app.schemas.tasks import ProcessTaskInboxInput
 from app.services.calendar_service import CalendarService
 from app.services.email_service import EmailAnalysisService, EmailService
 from app.services.matching_service import MatchingService
@@ -18,6 +19,7 @@ from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
+from app.workflows.process_task_inbox.graph import ProcessTaskInboxWorkflow
 from app.adapters.calendar_client import CalendarClient
 from app.adapters.notion_client import NotionClient
 from app.schemas.calendar import EventCreateInput
@@ -1022,3 +1024,82 @@ def test_context_matching_can_use_context_description_profile():
     ]
     selected, _ = matching.match_contexts(["internet admin"], contexts, metadata={"source": "email", "email_id": "e3"})
     assert selected == ["ctx-computer"]
+
+
+def test_process_task_inbox_enriches_missing_fields_and_marks_processed():
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.contexts_db.database_id = "contexts-db"
+    computer = notion.create_page(
+        "contexts-db",
+        {
+            settings.contexts_db.title_property: "Computer",
+            settings.contexts_db.status_property: "Active",
+        },
+    )
+    workflow = ProcessTaskInboxWorkflow(
+        {
+            "task_service": tasks,
+            "project_service": projects,
+            "matching_service": matching,
+        }
+    )
+    inbox = tasks.create_task(
+        TaskCreateInput(
+            title="Submit residency rotation logs",
+            status="Inbox",
+            notes="Please submit by 2026-04-02",
+            tags=["Email"],
+        )
+    )
+    assert inbox.task is not None
+
+    result = workflow.run(
+        ProcessTaskInboxInput(
+            max_count=20,
+            preview_only=False,
+            include_statuses=["Inbox"],
+            processed_tag="Inbox Processed",
+        )
+    )
+    assert result.processed_count == 1
+    assert result.updated_count == 1
+    updated = tasks.get_task(inbox.task.id)
+    assert updated.importance is not None
+    assert updated.scheduled is not None
+    assert updated.estimated_minutes is not None
+    assert "Inbox Processed" in updated.tags
+    assert updated.contexts in ([computer["id"]], ["Computer"])
+
+
+def test_process_task_inbox_creates_project_when_explicitly_requested():
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.contexts_db.database_id = "contexts-db"
+    notion.create_page(
+        "contexts-db",
+        {
+            settings.contexts_db.title_property: "Computer",
+            settings.contexts_db.status_property: "Active",
+        },
+    )
+    workflow = ProcessTaskInboxWorkflow(
+        {
+            "task_service": tasks,
+            "project_service": projects,
+            "matching_service": matching,
+        }
+    )
+    inbox = tasks.create_task(
+        TaskCreateInput(
+            title="Kickoff planning",
+            status="Inbox",
+            notes="This is a new project. New Project: Neighborhood Clinic Rollout",
+            tags=[],
+        )
+    )
+    assert inbox.task is not None
+
+    result = workflow.run(ProcessTaskInboxInput(preview_only=False, include_statuses=["Inbox"]))
+    assert result.created_projects == 1
+    assert result.results[0].created_project_id is not None
+    updated = tasks.get_task(inbox.task.id)
+    assert updated.project_id is not None

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas.tasks import TaskCreateInput, TaskUpdateInput
+from app.schemas.tasks import ProcessTaskInboxInput, TaskCreateInput, TaskUpdateInput
 
 
 def register(server, container) -> None:
@@ -23,3 +23,12 @@ def register(server, container) -> None:
     @server.tool(name="list_tasks_for_project", description="List tasks linked to a project.")
     async def list_tasks_for_project_tool(project_id: str):
         return [task.model_dump() for task in container.task_service.list_tasks_for_project(project_id)]
+
+    @server.tool(name="process_task_inbox", description="Process Notion inbox tasks by enriching missing fields and tagging them as processed.")
+    async def process_task_inbox_tool(arguments: dict):
+        return container.process_task_inbox_workflow.run(ProcessTaskInboxInput.model_validate(arguments)).model_dump()
+
+    @server.tool(name="preview_task_inbox", description="Preview inbox task enrichment without committing any writes.")
+    async def preview_task_inbox_tool(arguments: dict):
+        payload = ProcessTaskInboxInput.model_validate({**arguments, "preview_only": True})
+        return container.process_task_inbox_workflow.run(payload).model_dump()

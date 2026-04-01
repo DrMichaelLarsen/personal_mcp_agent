@@ -84,3 +84,26 @@ class TaskResult(BaseModel):
     confidence: ConfidenceInfo
     review_items: list[ReviewItem] = Field(default_factory=list)
     message: str = ""
+
+
+class ProcessTaskInboxInput(BaseModel):
+    max_count: int = 50
+    preview_only: bool = True
+    include_statuses: list[str] = Field(default_factory=lambda: ["Inbox"])
+    processed_tag: str = "Inbox Processed"
+
+
+class TaskInboxItemResult(BaseModel):
+    task_id: str
+    updated: bool = False
+    created_project_id: str | None = None
+    changed_fields: dict[str, Any] = Field(default_factory=dict)
+    review_items: list[ReviewItem] = Field(default_factory=list)
+
+
+class ProcessTaskInboxResult(BaseModel):
+    preview_only: bool
+    processed_count: int
+    updated_count: int
+    created_projects: int
+    results: list[TaskInboxItemResult] = Field(default_factory=list)
