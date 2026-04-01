@@ -1103,3 +1103,57 @@ def test_process_task_inbox_creates_project_when_explicitly_requested():
     assert result.results[0].created_project_id is not None
     updated = tasks.get_task(inbox.task.id)
     assert updated.project_id is not None
+
+
+def test_process_task_inbox_llm_enrichment_is_used_when_enabled(tmp_path):
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.llm.enabled = True
+    settings.llm.use_for_task_inbox = True
+    settings.llm.cost_ledger_path = str(tmp_path / "task_inbox_costs.jsonl")
+    settings.contexts_db.database_id = "contexts-db"
+    notion.create_page(
+        "contexts-db",
+        {
+            settings.contexts_db.title_property: "Computer",
+            settings.contexts_db.status_property: "Active",
+        },
+    )
+    llm = FakeLLMClient(
+        response_map={
+            "Task requiring llm": {
+                "importance": 140,
+                "contexts": ["Computer"],
+                "scheduled": "2026-04-03",
+                "deadline": "2026-04-05",
+                "estimated_minutes": 55,
+                "project_name": None,
+                "rationale": ["Detected urgency and effort from task description."],
+            }
+        }
+    )
+    workflow = ProcessTaskInboxWorkflow(
+        {
+            "task_service": tasks,
+            "project_service": projects,
+            "matching_service": matching,
+            "llm_client": llm,
+            "settings": settings,
+            "cost_service": CostService(settings.llm),
+        }
+    )
+    inbox = tasks.create_task(
+        TaskCreateInput(
+            title="Task requiring llm",
+            status="Inbox",
+            notes="Need strong inference",
+            tags=[],
+        )
+    )
+    assert inbox.task is not None
+    result = workflow.run(ProcessTaskInboxInput(preview_only=False, include_statuses=["Inbox"]))
+    assert result.updated_count == 1
+    updated = tasks.get_task(inbox.task.id)
+    assert updated.importance == 140
+    assert updated.scheduled == "2026-04-03"
+    assert updated.deadline == "2026-04-05"
+    assert updated.estimated_minutes == 55

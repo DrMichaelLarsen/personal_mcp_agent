@@ -88,6 +88,9 @@ container = ServiceContainer(
             "task_service": task_service,
             "project_service": project_service,
             "matching_service": matching_service,
+            "llm_client": llm_client,
+            "settings": settings,
+            "cost_service": cost_service,
         }
     ),
     plan_day_workflow=PlanDayWorkflow(

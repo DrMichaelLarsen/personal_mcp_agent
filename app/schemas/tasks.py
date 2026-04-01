@@ -50,6 +50,7 @@ class TaskUpdateInput(BaseModel):
     parent_id: str | None = None
     dependency_of_ids: list[str] | None = None
     depends_on_ids: list[str] | None = None
+    ai_cost: float | None = None
 
 
 class TaskRecord(BaseModel):

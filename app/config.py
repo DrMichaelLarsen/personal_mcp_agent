@@ -97,9 +97,11 @@ class LLMConfig(BaseModel):
     premium_model: str = "gpt-5.4"
     best_model: str | None = None
     use_for_email_analysis: bool = True
+    use_for_task_inbox: bool = True
     use_for_ambiguous_matching: bool = True
     quality_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
     email_analysis_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
+    task_inbox_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
     ambiguous_matching_tier: Literal["fast", "balanced", "smart", "best"] = "fast"
     cost_ledger_path: str = "data/ai_costs.jsonl"
 

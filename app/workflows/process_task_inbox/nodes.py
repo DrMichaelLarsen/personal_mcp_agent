@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, timedelta
 
+from app.schemas.common import ReviewItem
 from app.schemas.projects import ProjectCreateInput
 from app.schemas.tasks import ProcessTaskInboxResult, TaskInboxItemResult, TaskUpdateInput
+from app.utils.confidence import build_confidence
 from app.workflows.process_task_inbox.state import ProcessTaskInboxState
 
 
@@ -90,6 +93,54 @@ def _infer_estimate_minutes(text: str) -> int:
     return 45
 
 
+def _llm_enrichment_for_task(task, deps: dict) -> tuple[dict, list[ReviewItem]]:
+    llm = deps.get("llm_client")
+    settings = deps.get("settings")
+    cost_service = deps.get("cost_service")
+    if not llm or not settings or not settings.llm.enabled or not settings.llm.use_for_task_inbox:
+        return {}, []
+    tier = settings.llm.task_inbox_tier
+    model = cost_service.get_tier_model(tier) if cost_service else settings.llm.standard_model
+    system_prompt = (
+        "You enrich Notion task inbox items. Return strict JSON keys only: "
+        "importance (int 0-200 or null), contexts (array of short strings), scheduled (YYYY-MM-DD or null), "
+        "deadline (YYYY-MM-DD or null), estimated_minutes (int or null), project_name (string or null), rationale (array of strings)."
+    )
+    user_prompt = json.dumps(
+        {
+            "task_id": task.id,
+            "title": task.title,
+            "notes": task.notes,
+            "existing": {
+                "importance": task.importance,
+                "contexts": task.contexts,
+                "scheduled": task.scheduled,
+                "deadline": task.deadline,
+                "estimated_minutes": task.estimated_minutes,
+                "project_id": task.project_id,
+            },
+        }
+    )
+    try:
+        data = llm.chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            operation="task_inbox_enrichment",
+            metadata={"task_id": task.id},
+        )
+    except Exception:
+        return {}, [
+            ReviewItem(
+                item_type="task_inbox_llm",
+                reason="LLM enrichment failed; deterministic fallback used.",
+                options=[{"task_id": task.id}],
+                confidence=build_confidence(0.4, "Task enrichment fell back to deterministic rules.", True),
+            )
+        ]
+    return data or {}, []
+
+
 def fetch_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxState:
     request = deps["request"]
     task_service = deps["task_service"]
@@ -119,8 +170,11 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
         created_project_id = None
         project_id = task.project_id
 
+        llm_data, llm_reviews = _llm_enrichment_for_task(task, deps)
+        review_items.extend(llm_reviews)
+
         if not project_id:
-            explicit_name = _extract_explicit_project_name(content)
+            explicit_name = _extract_explicit_project_name(content) or (llm_data.get("project_name") if isinstance(llm_data.get("project_name"), str) else None)
             if explicit_name:
                 existing = next((p for p in active_projects if p.title.strip().lower() == explicit_name.strip().lower()), None)
                 if existing:
@@ -140,12 +194,20 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
         if project_id and project_id != task.project_id:
             changed["project_id"] = project_id
 
-        importance = task.importance if task.importance is not None else _infer_importance(content)
-        if task.importance is None:
+        llm_importance = llm_data.get("importance") if isinstance(llm_data, dict) else None
+        if isinstance(llm_importance, bool):
+            llm_importance = None
+        if not isinstance(llm_importance, int):
+            llm_importance = None
+        default_importance = project_service.settings.tasks_db.default_importance
+        treat_importance_as_missing = task.importance is None or task.importance == default_importance
+        importance = (llm_importance if llm_importance is not None else _infer_importance(content)) if treat_importance_as_missing else (task.importance or default_importance)
+        if treat_importance_as_missing:
             changed["importance"] = importance
 
         if not task.contexts:
-            requested = _infer_context_names(content)
+            llm_contexts = llm_data.get("contexts") if isinstance(llm_data.get("contexts"), list) else None
+            requested = [c for c in (llm_contexts or _infer_context_names(content)) if isinstance(c, str) and c.strip()]
             matched_contexts, context_reviews = matching_service.match_contexts(
                 requested,
                 contexts,
@@ -154,14 +216,31 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
             review_items.extend(context_reviews)
             changed["contexts"] = matched_contexts or requested
 
+        llm_scheduled = llm_data.get("scheduled") if isinstance(llm_data.get("scheduled"), str) else None
+        llm_deadline = llm_data.get("deadline") if isinstance(llm_data.get("deadline"), str) else None
         inferred_scheduled, inferred_deadline = _infer_dates(content, importance)
         if not task.scheduled and inferred_scheduled:
-            changed["scheduled"] = inferred_scheduled
+            changed["scheduled"] = llm_scheduled or inferred_scheduled
         if not task.deadline and inferred_deadline:
-            changed["deadline"] = inferred_deadline
+            changed["deadline"] = llm_deadline or inferred_deadline
+        elif not task.deadline and llm_deadline:
+            changed["deadline"] = llm_deadline
 
         if task.estimated_minutes is None:
-            changed["estimated_minutes"] = _infer_estimate_minutes(content)
+            llm_estimated = llm_data.get("estimated_minutes") if isinstance(llm_data.get("estimated_minutes"), int) else None
+            changed["estimated_minutes"] = llm_estimated if llm_estimated else _infer_estimate_minutes(content)
+
+        cost_service = deps.get("cost_service")
+        ai_cost_value = None
+        if cost_service:
+            ai_summary = cost_service.summarize_recent_usage(
+                event_count=0,
+                operation_prefix="task_inbox_enrichment",
+                metadata_filter={"task_id": task.id},
+            )
+            ai_cost_value = float(ai_summary.get("total_estimated_cost", 0.0) or 0.0)
+            if ai_cost_value > 0:
+                changed["ai_cost"] = round((task.ai_cost or 0.0) + ai_cost_value, 8)
 
         current_tags = list(task.tags or [])
         if request.processed_tag not in current_tags:
@@ -179,6 +258,7 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
                     deadline=changed.get("deadline"),
                     estimated_minutes=changed.get("estimated_minutes"),
                     tags=changed.get("tags"),
+                    ai_cost=changed.get("ai_cost"),
                 )
             )
             updated = True

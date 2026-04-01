@@ -106,6 +106,7 @@ class TaskService:
                 cfg.parent_property: data.parent_id,
                 cfg.dependency_of_property: data.dependency_of_ids,
                 cfg.depends_on_property: data.depends_on_ids,
+                cfg.ai_cost_property: data.ai_cost,
             }.items()
             if key is not None and value is not None
         }
