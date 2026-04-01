@@ -18,7 +18,7 @@ from app.schemas.email import (
 )
 from app.schemas.notes import NoteCreateInput
 from app.schemas.projects import ProjectCreateInput
-from app.schemas.tasks import TaskCreateInput
+from app.schemas.tasks import TaskCreateInput, TaskResult, TaskUpdateInput
 from app.schemas.common import ReviewItem
 from app.utils.confidence import build_confidence
 from app.utils.ids import stable_hash
@@ -409,6 +409,35 @@ def _append_attachment_links(base_markdown: str, attachment_links: list) -> str:
     return f"{base_markdown}\n\n" + "\n".join(lines)
 
 
+def _is_reminder_email(subject: str, body: str) -> bool:
+    text = f"{subject}\n{body}".lower()
+    signals = ["reminder", "following up", "follow-up", "gentle nudge", "just checking in", "ping"]
+    return any(token in text for token in signals)
+
+
+def _merge_tags(existing: list[str], extra: list[str]) -> list[str]:
+    seen = set()
+    merged: list[str] = []
+    for value in [*(existing or []), *extra]:
+        if not value:
+            continue
+        key = value.strip()
+        if not key:
+            continue
+        lowered = key.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        merged.append(key)
+    return merged
+
+
+def _boost_importance(current: int | None, candidate: int | None, is_reminder: bool) -> int:
+    base = current if current is not None else (candidate if candidate is not None else 50)
+    step = 25 if is_reminder else 10
+    return max(base, min(300, base + step))
+
+
 def _has_explicit_new_project_intent(subject: str, body: str) -> bool:
     text = f"{subject}\n{body}".lower()
     signals = [
@@ -621,6 +650,7 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
         if classification.category in {"task", "task+note", "event+task"} and email.id in task_candidates:
             candidate = task_candidates[email.id]
             matched_contexts = state.get("resolved_contexts", {}).get(email.id, candidate.contexts)
+            reminder_email = _is_reminder_email(email.subject, email.body)
             if len(matched_contexts) > 1:
                 matched_contexts = matched_contexts[:1]
             ai_summary = cost_service.summarize_recent_usage(
@@ -646,27 +676,71 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
             )
             notes_with_attachments = _append_attachment_links(candidate.notes or "", attachment_links)
             ai_cost_value = float(ai_summary.get("total_estimated_cost", 0.0) or 0.0)
-            if preview_only or classification.confidence.confidence_score < request.confidence_threshold:
-                created_task = task_service.create_task(
-                    TaskCreateInput(
-                        title=candidate.title,
-                        notes=notes_with_attachments,
-                        tags=[EMAIL_SOURCE_TAG],
-                        contexts=matched_contexts,
-                        estimated_minutes=candidate.estimated_minutes,
-                        importance=candidate.importance,
-                        scheduled=candidate.scheduled,
-                        deadline=candidate.deadline,
-                        status="Inbox",
-                        project_id=selected_project_id,
-                        ai_cost=ai_cost_value,
-                        ai_cost_summary=ai_cost_md,
+            duplicate_task, duplicate_score = task_service.find_similar_open_task(candidate.title, selected_project_id)
+            duplicate_detected = duplicate_task is not None and duplicate_score >= 0.86
+
+            if duplicate_detected and duplicate_task:
+                boosted_importance = _boost_importance(duplicate_task.importance, candidate.importance, reminder_email)
+                merged_tags = _merge_tags(duplicate_task.tags, [EMAIL_SOURCE_TAG, "Reminder" if reminder_email else "Follow-up"])
+                review_items.append(
+                    {
+                        "item_type": "task_duplicate",
+                        "reason": f"Matched existing task '{duplicate_task.title}' (score={duplicate_score:.2f}); updated instead of creating duplicate.",
+                        "options": [
+                            {
+                                "task_id": duplicate_task.id,
+                                "match_score": round(float(duplicate_score), 3),
+                                "importance_before": duplicate_task.importance,
+                                "importance_after": boosted_importance,
+                                "is_reminder": reminder_email,
+                            }
+                        ],
+                        "confidence": build_confidence(duplicate_score, "Duplicate task check against open tasks.", False).model_dump(),
+                    }
+                )
+                if preview_only:
+                    created_task = TaskResult(
+                        created=False,
+                        task=duplicate_task,
+                        confidence=build_confidence(duplicate_score, "Preview detected duplicate task.", False),
+                        review_items=[],
+                        message="Duplicate task detected (preview).",
                     )
-                )
-                logger.info(
-                    "Prepared task from email in preview/low-confidence mode.",
-                    extra={"event": "workflow.process_emails.task.preview", "context": {"email_id": email.id, "task_title": candidate.title, "contexts": matched_contexts, "scheduled": candidate.scheduled, "deadline": candidate.deadline}},
-                )
+                else:
+                    created_task = task_service.update_task(
+                        TaskUpdateInput(
+                            task_id=duplicate_task.id,
+                            importance=boosted_importance,
+                            tags=merged_tags,
+                        )
+                    )
+                    logger.info(
+                        "Updated existing task from reminder/duplicate email.",
+                        extra={"event": "workflow.process_emails.task.duplicate_update", "context": {"email_id": email.id, "task_id": duplicate_task.id, "score": round(float(duplicate_score), 3), "importance": boosted_importance, "is_reminder": reminder_email}},
+                    )
+
+            if preview_only or classification.confidence.confidence_score < request.confidence_threshold:
+                if not duplicate_detected:
+                    created_task = task_service.create_task(
+                        TaskCreateInput(
+                            title=candidate.title,
+                            notes=notes_with_attachments,
+                            tags=[EMAIL_SOURCE_TAG],
+                            contexts=matched_contexts,
+                            estimated_minutes=candidate.estimated_minutes,
+                            importance=candidate.importance,
+                            scheduled=candidate.scheduled,
+                            deadline=candidate.deadline,
+                            status="Inbox",
+                            project_id=selected_project_id,
+                            ai_cost=ai_cost_value,
+                            ai_cost_summary=ai_cost_md,
+                        )
+                    )
+                    logger.info(
+                        "Prepared task from email in preview/low-confidence mode.",
+                        extra={"event": "workflow.process_emails.task.preview", "context": {"email_id": email.id, "task_title": candidate.title, "contexts": matched_contexts, "scheduled": candidate.scheduled, "deadline": candidate.deadline}},
+                    )
 
             if (
                 created_task
@@ -682,21 +756,31 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                         continue
                     sub_scheduled, sub_deadline = _infer_item_dates(text)
                     sub_contexts = _infer_contexts_for_item(text, matched_contexts)
-                    sub_result = task_service.create_task(
-                        TaskCreateInput(
-                            title=text[:180],
-                            notes=f"Subtask extracted from email task: {parent_title}\n\n{text}",
-                            tags=[EMAIL_SOURCE_TAG],
-                            contexts=sub_contexts,
-                            importance=candidate.importance,
-                            estimated_minutes=max(10, int((candidate.estimated_minutes or 30) / max(1, len(analysis.action_items)))),
-                            scheduled=sub_scheduled or candidate.scheduled,
-                            deadline=sub_deadline or candidate.deadline,
-                            status="Inbox",
-                            project_id=selected_project_id,
-                            parent_id=created_task.task.id,
+                    sub_duplicate, sub_score = task_service.find_similar_open_task(text[:180], selected_project_id)
+                    if sub_duplicate is not None and sub_score >= 0.86:
+                        sub_result = task_service.update_task(
+                            TaskUpdateInput(
+                                task_id=sub_duplicate.id,
+                                importance=_boost_importance(sub_duplicate.importance, candidate.importance, reminder_email),
+                                tags=_merge_tags(sub_duplicate.tags, [EMAIL_SOURCE_TAG, "Reminder" if reminder_email else "Follow-up"]),
+                            )
                         )
-                    )
+                    else:
+                        sub_result = task_service.create_task(
+                            TaskCreateInput(
+                                title=text[:180],
+                                notes=f"Subtask extracted from email task: {parent_title}\n\n{text}",
+                                tags=[EMAIL_SOURCE_TAG],
+                                contexts=sub_contexts,
+                                importance=candidate.importance,
+                                estimated_minutes=max(10, int((candidate.estimated_minutes or 30) / max(1, len(analysis.action_items)))),
+                                scheduled=sub_scheduled or candidate.scheduled,
+                                deadline=sub_deadline or candidate.deadline,
+                                status="Inbox",
+                                project_id=selected_project_id,
+                                parent_id=created_task.task.id,
+                            )
+                        )
                     if preview_only:
                         sub_result.created = False
                     created_subtasks.append(
@@ -724,27 +808,28 @@ def build_results(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
                     )
                 created_task.created = not preview_only and created_task.created
             else:
-                created_task = task_service.create_task(
-                    TaskCreateInput(
-                        title=candidate.title,
-                        notes=notes_with_attachments,
-                        tags=[EMAIL_SOURCE_TAG],
-                        contexts=matched_contexts,
-                        estimated_minutes=candidate.estimated_minutes,
-                        importance=candidate.importance,
-                        scheduled=candidate.scheduled,
-                        deadline=candidate.deadline,
-                        status="Inbox",
-                        project_id=selected_project_id,
-                        source_url=f"gmail://{stable_hash(email.id)}",
-                        ai_cost=ai_cost_value,
-                        ai_cost_summary=ai_cost_md,
+                if not duplicate_detected:
+                    created_task = task_service.create_task(
+                        TaskCreateInput(
+                            title=candidate.title,
+                            notes=notes_with_attachments,
+                            tags=[EMAIL_SOURCE_TAG],
+                            contexts=matched_contexts,
+                            estimated_minutes=candidate.estimated_minutes,
+                            importance=candidate.importance,
+                            scheduled=candidate.scheduled,
+                            deadline=candidate.deadline,
+                            status="Inbox",
+                            project_id=selected_project_id,
+                            source_url=f"gmail://{stable_hash(email.id)}",
+                            ai_cost=ai_cost_value,
+                            ai_cost_summary=ai_cost_md,
+                        )
                     )
-                )
-                logger.info(
-                    "Created committed task from email.",
-                    extra={"event": "workflow.process_emails.task.commit", "context": {"email_id": email.id, "task_id": created_task.task.id if created_task.task else None, "contexts": matched_contexts, "scheduled": candidate.scheduled, "deadline": candidate.deadline}},
-                )
+                    logger.info(
+                        "Created committed task from email.",
+                        extra={"event": "workflow.process_emails.task.commit", "context": {"email_id": email.id, "task_id": created_task.task.id if created_task.task else None, "contexts": matched_contexts, "scheduled": candidate.scheduled, "deadline": candidate.deadline}},
+                    )
 
         if classification.category in {"note", "task+note"} and email.id in note_candidates:
             candidate = note_candidates[email.id]

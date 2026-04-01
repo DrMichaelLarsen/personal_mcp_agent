@@ -4,6 +4,7 @@ from app.adapters.notion_client import NotionClient
 from app.config import Settings
 from app.schemas.tasks import TaskCreateInput, TaskRecord, TaskResult, TaskUpdateInput
 from app.utils.confidence import build_confidence
+from app.utils.text import similarity
 
 from app.services.matching_service import MatchingService
 from app.services.project_service import ProjectService
@@ -127,6 +128,41 @@ class TaskService:
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id, filters)]
         filtered = [item for item in items if item.status != "Complete"]
         return sorted(filtered, key=lambda item: item.score or 0, reverse=True)
+
+    def list_open_tasks(self, project_id: str | None = None) -> list[TaskRecord]:
+        cfg = self.settings.tasks_db
+        filters = {cfg.relation_property: project_id} if project_id and cfg.relation_property else None
+        items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id, filters)]
+        return [item for item in items if item.status != "Complete"]
+
+    def find_similar_open_task(self, title: str, project_id: str | None = None) -> tuple[TaskRecord | None, float]:
+        def _normalize_candidate(value: str) -> str:
+            lowered = value.strip()
+            # Common email reminder prefixes should not block duplicate detection.
+            prefixes = ["reminder:", "re:", "fw:", "fwd:", "follow up:", "follow-up:"]
+            changed = True
+            while changed:
+                changed = False
+                compact = lowered.lower()
+                for prefix in prefixes:
+                    if compact.startswith(prefix):
+                        lowered = lowered[len(prefix):].strip()
+                        changed = True
+                        break
+            return lowered
+
+        candidates = self.list_open_tasks(project_id=project_id)
+        best_task: TaskRecord | None = None
+        best_score = 0.0
+        normalized_title = _normalize_candidate(title)
+        for task in candidates:
+            raw_score = similarity(title, task.title)
+            normalized_score = similarity(normalized_title, _normalize_candidate(task.title))
+            score = max(raw_score, normalized_score)
+            if score > best_score:
+                best_score = score
+                best_task = task
+        return best_task, best_score
 
     def _to_record(self, raw: dict) -> TaskRecord:
         props = raw.get("properties", {})

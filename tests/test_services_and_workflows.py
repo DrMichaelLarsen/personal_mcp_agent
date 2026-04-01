@@ -690,6 +690,57 @@ def test_event_section_add_to_calendar_is_markdown_link():
     assert "[Add to Google Calendar](https://calendar.google.com/calendar/render?" in notes_text
 
 
+def test_reminder_email_updates_existing_task_instead_of_creating_duplicate():
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.contexts_db.database_id = "contexts-db"
+    notion.create_page("contexts-db", {settings.contexts_db.title_property: "Computer", settings.contexts_db.status_property: "Active"})
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1", status="Active"))
+    existing = tasks.create_task(
+        TaskCreateInput(
+            title="Send onboarding packet",
+            project_id=project.id,
+            importance=50,
+            contexts=["Computer"],
+            status="Inbox",
+        )
+    )
+    assert existing.task is not None
+
+    workflow = ProcessEmailsWorkflow(
+        {
+            "email_service": email,
+            "matching_service": matching,
+            "project_service": projects,
+            "task_service": tasks,
+            "note_service": notes,
+            "calendar_service": calendar,
+        }
+    )
+    result = workflow.run(
+        ProcessEmailsInput(
+            preview_only=False,
+            input_emails=[
+                EmailMessage(
+                    id="reminder-dup-1",
+                    thread_id="reminder-thread-1",
+                    subject="Reminder: send onboarding packet",
+                    sender="ops@example.com",
+                    body="Friendly reminder to send onboarding packet today.",
+                    labels=["task"],
+                )
+            ],
+        )
+    )
+
+    open_tasks = tasks.list_open_tasks(project_id=project.id)
+    assert len(open_tasks) == 1
+    updated = open_tasks[0]
+    assert updated.id == existing.task.id
+    assert (updated.importance or 0) >= 75
+    assert "Reminder" in updated.tags
+    assert any(item.item_type == "task_duplicate" for item in result.results[0].review_items)
+
+
 def test_area_tree_is_built_with_full_paths():
     settings, notion, projects, *_ = build_context()
     _, _, leaf = seed_area_tree(settings, notion)
