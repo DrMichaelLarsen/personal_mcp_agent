@@ -93,6 +93,11 @@ class FakeNotionClient:
     def get_page(self, page_id: str):
         return self.pages[page_id]
 
+    def append_markdown(self, page_id: str, markdown: str) -> None:
+        blocks = self.markdown_to_blocks(markdown)
+        self.pages[page_id].setdefault("children", [])
+        self.pages[page_id]["children"].extend(blocks)
+
     def query_database(self, database_id: str, filters: dict | None = None):
         items = [page for page in self.pages.values() if page["database_id"] == database_id]
         if not filters:

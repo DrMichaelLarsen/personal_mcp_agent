@@ -149,6 +149,12 @@ class TaskService:
     ) -> list[TaskRecord]:
         cfg = self.settings.tasks_db
         include = {(item or "").strip().lower() for item in (include_statuses or ["Inbox"]) if (item or "").strip()}
+        legacy_inbox_alias_applied = False
+        if "inbox" in include:
+            # Backward compatibility: legacy callers still send include_statuses=["Inbox"],
+            # but current workflow semantics use status + formula criteria.
+            include.update({"to do", "not started"})
+            legacy_inbox_alias_applied = True
         processed_key = (processed_tag or "").strip().lower()
         inbox_formula_key = (inbox_formula_property or "").strip()
         all_items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
@@ -185,12 +191,33 @@ class TaskService:
                     "returned_count": len(limited),
                     "max_count": max_count,
                     "include_statuses": sorted(list(include)),
+                    "legacy_inbox_alias_applied": legacy_inbox_alias_applied,
                     "inbox_formula_property": inbox_formula_property,
                     "processed_tag": processed_tag,
                 },
             },
         )
         return limited
+
+    def append_ai_decision_note(self, task_id: str, changed_fields: dict, source: str = "process_task_inbox") -> None:
+        if not changed_fields:
+            return
+
+        def _format_value(value):
+            if isinstance(value, list):
+                return ", ".join(str(item) for item in value) if value else "(none)"
+            if value is None:
+                return "(none)"
+            return str(value)
+
+        lines = [
+            "## AI Decision Log",
+            f"Source: {source}",
+            "Changes applied:",
+        ]
+        for key in sorted(changed_fields.keys()):
+            lines.append(f"- {key}: {_format_value(changed_fields.get(key))}")
+        self.notion.append_markdown(task_id, "\n".join(lines))
 
     def find_similar_open_task(self, title: str, project_id: str | None = None) -> tuple[TaskRecord | None, float]:
         def _normalize_candidate(value: str) -> str:

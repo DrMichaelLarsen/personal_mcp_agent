@@ -399,6 +399,18 @@ class NotionClient:
             return
         self._request("PATCH", f"/blocks/{page_id}/children", {"children": encoded_blocks})
 
+    def append_blocks(self, page_id: str, blocks: list[dict[str, Any]]) -> None:
+        if not blocks:
+            return
+        encoded_children = self._encode_blocks(blocks)
+        for chunk in self._chunk_blocks(encoded_children, max_blocks=100):
+            self._append_children(page_id, chunk)
+
+    def append_markdown(self, page_id: str, markdown: str) -> None:
+        if not markdown or not markdown.strip():
+            return
+        self.append_blocks(page_id, self.markdown_to_blocks(markdown))
+
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         db_id = self._get_parent_database_id(page_id)
         property_types = self._get_database_property_types(db_id) if db_id else None

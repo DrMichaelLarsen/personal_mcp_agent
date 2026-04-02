@@ -304,6 +304,7 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
                     ai_cost=changed.get("ai_cost"),
                 )
             )
+            task_service.append_ai_decision_note(task.id, changed, source="process_task_inbox")
             updated = True
 
         logger.info(

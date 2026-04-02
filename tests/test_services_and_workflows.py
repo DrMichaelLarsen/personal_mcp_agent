@@ -1082,6 +1082,8 @@ def test_process_task_inbox_enriches_missing_fields_and_marks_processed():
     assert updated.estimated_minutes is not None
     assert "Inbox Processed" in updated.tags
     assert updated.contexts in ([computer["id"]], ["Computer"])
+    assert "## AI Decision Log" in (updated.notes or "")
+    assert "- tags:" in (updated.notes or "")
 
 
 def test_process_task_inbox_creates_project_when_explicitly_requested():
@@ -1235,3 +1237,23 @@ def test_list_inbox_candidates_filters_by_status_formula_and_processed_tag():
         processed_tag="Inbox Processed",
     )
     assert [item.id for item in selected] == [candidate.task.id]
+
+
+def test_list_inbox_candidates_legacy_inbox_status_alias_includes_todo_not_started():
+    settings, notion, projects, matching, tasks, *_ = build_context()
+    todo = tasks.create_task(TaskCreateInput(title="Todo candidate", status="To do", tags=[]))
+    not_started = tasks.create_task(TaskCreateInput(title="Not started candidate", status="Not started", tags=[]))
+    assert todo.task is not None
+    assert not_started.task is not None
+    notion.pages[todo.task.id]["properties"]["Inbox"] = True
+    notion.pages[not_started.task.id]["properties"]["Inbox"] = True
+
+    selected = tasks.list_inbox_candidates(
+        max_count=50,
+        include_statuses=["Inbox"],
+        inbox_formula_property="Inbox",
+        processed_tag="Inbox Processed",
+    )
+    selected_ids = {item.id for item in selected}
+    assert todo.task.id in selected_ids
+    assert not_started.task.id in selected_ids
