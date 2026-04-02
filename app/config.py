@@ -98,10 +98,12 @@ class LLMConfig(BaseModel):
     best_model: str | None = None
     use_for_email_analysis: bool = True
     use_for_task_inbox: bool = True
+    use_for_notes_inbox: bool = True
     use_for_ambiguous_matching: bool = True
     quality_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
     email_analysis_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
     task_inbox_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
+    notes_inbox_tier: Literal["fast", "balanced", "smart", "best"] = "balanced"
     ambiguous_matching_tier: Literal["fast", "balanced", "smart", "best"] = "fast"
     cost_ledger_path: str = "data/ai_costs.jsonl"
 
@@ -184,6 +186,7 @@ class Settings(BaseSettings):
     area_active_statuses: list[str] = Field(default_factory=lambda: ["active"])
     review_project_tag: str = "Needs Review"
     task_inbox_processed_tag: str = "Inbox Processed"
+    notes_inbox_processed_tag: str = "Inbox Processed"
     confidence: ConfidenceThresholds = Field(default_factory=ConfidenceThresholds)
     workday: WorkdayConfig = Field(default_factory=WorkdayConfig)
 

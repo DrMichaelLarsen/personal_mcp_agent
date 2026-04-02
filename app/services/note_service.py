@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.adapters.notion_client import NotionClient
 from app.config import Settings
-from app.schemas.notes import NoteCreateInput, NoteRecord, NoteResult
+from app.schemas.notes import NoteCreateInput, NoteRecord, NoteResult, NoteUpdateInput
 from app.utils.confidence import build_confidence
 
 from app.services.matching_service import MatchingService
@@ -61,6 +61,33 @@ class NoteService:
         children = self.notion.markdown_to_blocks(data.content) if data.content else None
         raw = self.notion.create_page(cfg.database_id, properties, children=children)
         return NoteResult(created=True, note=self._to_record(raw), confidence=confidence, review_items=review_items, message="Note created.")
+
+    def list_inbox_candidates(self, max_count: int = 50, processed_tag: str = "Inbox Processed") -> list[NoteRecord]:
+        cfg = self.settings.notes_db
+        processed_key = (processed_tag or "").strip().lower()
+        all_items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
+        candidates: list[NoteRecord] = []
+        for note in all_items:
+            tag_keys = {(tag or "").strip().lower() for tag in (note.tags or []) if (tag or "").strip()}
+            if processed_key and processed_key in tag_keys:
+                continue
+            candidates.append(note)
+        return candidates[: max(1, max_count)]
+
+    def update_note(self, data: NoteUpdateInput) -> NoteRecord:
+        cfg = self.settings.notes_db
+        properties = {
+            key: value
+            for key, value in {
+                cfg.relation_property: data.project_id,
+                cfg.area_property: data.area_id,
+                cfg.tags_property: data.tags,
+                cfg.ai_cost_property: data.ai_cost,
+            }.items()
+            if key is not None and value is not None
+        }
+        raw = self.notion.update_page(data.note_id, properties)
+        return self._to_record(raw)
 
     def search_notes(self, query: str) -> list[NoteRecord]:
         cfg = self.settings.notes_db

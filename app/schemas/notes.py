@@ -36,3 +36,31 @@ class NoteResult(BaseModel):
     confidence: ConfidenceInfo
     review_items: list[ReviewItem] = Field(default_factory=list)
     message: str = ""
+
+
+class NoteUpdateInput(BaseModel):
+    note_id: str
+    project_id: str | None = None
+    area_id: str | None = None
+    tags: list[str] | None = None
+    ai_cost: float | None = None
+
+
+class ProcessNotesInboxInput(BaseModel):
+    max_count: int = 50
+    preview_only: bool = True
+    processed_tag: str = "Inbox Processed"
+
+
+class NotesInboxItemResult(BaseModel):
+    note_id: str
+    updated: bool = False
+    changed_fields: dict = Field(default_factory=dict)
+    review_items: list[ReviewItem] = Field(default_factory=list)
+
+
+class ProcessNotesInboxResult(BaseModel):
+    preview_only: bool
+    processed_count: int
+    updated_count: int
+    results: list[NotesInboxItemResult] = Field(default_factory=list)

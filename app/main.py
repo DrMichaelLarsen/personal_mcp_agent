@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.logging import configure_logging
 from app.mcp.server import ServiceContainer, build_mcp_server
 from app.schemas.email import EmailMessage, ProcessEmailsInput
+from app.schemas.notes import ProcessNotesInboxInput
 from app.schemas.tasks import ProcessTaskInboxInput
 from app.services.calendar_service import CalendarService
 from app.services.cost_service import CostService
@@ -23,6 +24,7 @@ from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
+from app.workflows.process_notes_inbox.graph import ProcessNotesInboxWorkflow
 from app.workflows.process_task_inbox.graph import ProcessTaskInboxWorkflow
 
 configure_logging()
@@ -93,6 +95,16 @@ container = ServiceContainer(
             "cost_service": cost_service,
         }
     ),
+    process_notes_inbox_workflow=ProcessNotesInboxWorkflow(
+        {
+            "note_service": note_service,
+            "project_service": project_service,
+            "matching_service": matching_service,
+            "llm_client": llm_client,
+            "settings": settings,
+            "cost_service": cost_service,
+        }
+    ),
     plan_day_workflow=PlanDayWorkflow(
         {
             "calendar_service": calendar_service,
@@ -128,6 +140,12 @@ class ProcessTaskInboxRequest(BaseModel):
     max_count: int = 50
     preview_only: bool = True
     include_statuses: list[str] = Field(default_factory=lambda: ["Inbox"])
+    processed_tag: str | None = None
+
+
+class ProcessNotesInboxRequest(BaseModel):
+    max_count: int = 50
+    preview_only: bool = True
     processed_tag: str | None = None
 
 
@@ -250,6 +268,21 @@ async def process_task_inbox(payload: ProcessTaskInboxRequest) -> dict:
                 preview_only=payload.preview_only,
                 include_statuses=payload.include_statuses,
                 processed_tag=payload.processed_tag or settings.task_inbox_processed_tag,
+            )
+        )
+        return result.model_dump()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/workflows/process-notes-inbox")
+async def process_notes_inbox(payload: ProcessNotesInboxRequest) -> dict:
+    try:
+        result = container.process_notes_inbox_workflow.run(
+            ProcessNotesInboxInput(
+                max_count=payload.max_count,
+                preview_only=payload.preview_only,
+                processed_tag=payload.processed_tag or settings.notes_inbox_processed_tag,
             )
         )
         return result.model_dump()
