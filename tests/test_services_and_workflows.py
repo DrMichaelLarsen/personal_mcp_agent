@@ -107,11 +107,13 @@ def test_task_creation_mapping():
 
 def test_task_record_mapping_coerces_empty_people_relation_phone_shapes():
     settings, _, projects, matching, tasks, *_ = build_context()
+    project_rel_id = "b8c236db-83c7-48ff-96cf-4d54f0807f2d"
     raw = {
         "id": "task-raw-1",
         "title": "Fallback title",
         "properties": {
             settings.tasks_db.title_property: "Mapped title",
+            settings.tasks_db.relation_property: [project_rel_id],
             settings.tasks_db.contexts_property: None,
             settings.tasks_db.assigned_property: {"id": "abc", "type": "people", "people": []},
             settings.tasks_db.phone_property: {"id": "xyz", "type": "phone_number", "phone_number": None},
@@ -121,6 +123,7 @@ def test_task_record_mapping_coerces_empty_people_relation_phone_shapes():
     }
     mapped = tasks._to_record(raw)
     assert mapped.title == "Mapped title"
+    assert mapped.project_id == project_rel_id
     assert mapped.contexts == []
     assert mapped.assigned_to == []
     assert mapped.phone is None

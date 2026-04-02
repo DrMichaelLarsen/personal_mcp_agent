@@ -210,6 +210,16 @@ class TaskService:
         props = raw.get("properties", {})
         cfg = self.settings.tasks_db
 
+        def _as_single_id(value):
+            if isinstance(value, list):
+                if not value:
+                    return None
+                first = value[0]
+                return first if isinstance(first, str) else str(first)
+            if value is None:
+                return None
+            return value if isinstance(value, str) else str(value)
+
         def _as_list(value):
             if value is None:
                 return []
@@ -274,7 +284,7 @@ class TaskService:
             deadline=props.get(cfg.deadline_property) if cfg.deadline_property else None,
             estimated_minutes=props.get(cfg.estimate_property) if cfg.estimate_property else None,
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,
-            project_id=props.get(cfg.relation_property) if cfg.relation_property else None,
+            project_id=_as_single_id(props.get(cfg.relation_property)) if cfg.relation_property else None,
             project_title=props.get("Project Title"),
             contexts=_as_list(props.get(cfg.contexts_property)) if cfg.contexts_property else [],
             assigned_to=_as_list(props.get(cfg.assigned_property)) if cfg.assigned_property else [],
@@ -283,8 +293,8 @@ class TaskService:
             notes=notes_value,
             phone=_as_str(props.get(cfg.phone_property)) if cfg.phone_property else None,
             budget=props.get(cfg.budget_property) if cfg.budget_property else None,
-            goal_id=props.get(cfg.goal_property) if cfg.goal_property else None,
-            parent_id=props.get(cfg.parent_property) if cfg.parent_property else None,
+            goal_id=_as_single_id(props.get(cfg.goal_property)) if cfg.goal_property else None,
+            parent_id=_as_single_id(props.get(cfg.parent_property)) if cfg.parent_property else None,
             dependency_of_ids=_as_list(props.get(cfg.dependency_of_property)) if cfg.dependency_of_property else [],
             depends_on_ids=_as_list(props.get(cfg.depends_on_property)) if cfg.depends_on_property else [],
             score=props.get(cfg.score_property) if cfg.score_property else None,
