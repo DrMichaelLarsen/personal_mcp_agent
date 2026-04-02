@@ -42,7 +42,7 @@ class TaskService:
             )
 
         if not project_id and data.project_name:
-            match = self.matching_service.match_project(data.project_name, self.project_service.list_projects())
+            match = self.matching_service.match_project(data.project_name, self.project_service.list_active_projects())
             confidence = match.confidence
             review_items.extend(match.review_items)
             if match.matched and match.selected_project:

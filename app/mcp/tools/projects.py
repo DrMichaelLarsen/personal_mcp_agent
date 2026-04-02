@@ -10,7 +10,7 @@ def register(server, container) -> None:
 
     @server.tool(name="find_project", description="Find the best matching project for a provided name and return candidates if ambiguous.")
     async def find_project_tool(name: str):
-        result = container.matching_service.match_project(name, container.project_service.list_projects())
+        result = container.matching_service.match_project(name, container.project_service.list_active_projects())
         return result.model_dump()
 
     @server.tool(name="get_project", description="Get a project by ID.")

@@ -29,7 +29,7 @@ class NoteService:
         review_items = []
         confidence = build_confidence(1.0, "Note created with explicit input.", False)
         if not project_id and data.project_name:
-            match = self.matching_service.match_project(data.project_name, self.project_service.list_projects())
+            match = self.matching_service.match_project(data.project_name, self.project_service.list_active_projects())
             review_items.extend(match.review_items)
             confidence = match.confidence
             if match.matched and match.selected_project:
