@@ -36,6 +36,7 @@ class ProcessTaskInboxWorkflow:
                     "preview_only": request.preview_only,
                     "max_count": request.max_count,
                     "include_statuses": request.include_statuses,
+                    "inbox_formula_property": request.inbox_formula_property,
                     "processed_tag": request.processed_tag,
                 },
             },

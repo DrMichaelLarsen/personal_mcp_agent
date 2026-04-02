@@ -165,6 +165,7 @@ def fetch_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSta
         max_count=request.max_count,
         include_statuses=request.include_statuses,
         processed_tag=request.processed_tag,
+        inbox_formula_property=request.inbox_formula_property,
     )
     logger.info(
         "Fetched task inbox candidates from Notion.",
@@ -174,6 +175,7 @@ def fetch_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSta
                 "candidate_count": len(tasks),
                 "max_count": request.max_count,
                 "include_statuses": request.include_statuses,
+                "inbox_formula_property": request.inbox_formula_property,
                 "processed_tag": request.processed_tag,
             },
         },

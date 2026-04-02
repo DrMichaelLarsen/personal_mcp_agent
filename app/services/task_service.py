@@ -140,19 +140,32 @@ class TaskService:
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id, filters)]
         return [item for item in items if item.status != "Complete"]
 
-    def list_inbox_candidates(self, max_count: int = 50, include_statuses: list[str] | None = None, processed_tag: str = "Inbox Processed") -> list[TaskRecord]:
+    def list_inbox_candidates(
+        self,
+        max_count: int = 50,
+        include_statuses: list[str] | None = None,
+        processed_tag: str = "Inbox Processed",
+        inbox_formula_property: str | None = "Inbox",
+    ) -> list[TaskRecord]:
         cfg = self.settings.tasks_db
         include = {(item or "").strip().lower() for item in (include_statuses or ["Inbox"]) if (item or "").strip()}
         processed_key = (processed_tag or "").strip().lower()
+        inbox_formula_key = (inbox_formula_property or "").strip()
         all_items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
         candidates: list[TaskRecord] = []
         status_filtered_count = 0
+        inbox_filtered_count = 0
         processed_filtered_count = 0
         for task in all_items:
             status_key = (task.status or "").strip().lower()
             if include and status_key not in include:
                 status_filtered_count += 1
                 continue
+            if inbox_formula_key:
+                inbox_value = (task.raw.get("properties", {}) or {}).get(inbox_formula_key)
+                if not bool(inbox_value):
+                    inbox_filtered_count += 1
+                    continue
             tag_keys = {(tag or "").strip().lower() for tag in (task.tags or []) if (tag or "").strip()}
             if processed_key and processed_key in tag_keys:
                 processed_filtered_count += 1
@@ -166,11 +179,13 @@ class TaskService:
                 "context": {
                     "total_tasks": len(all_items),
                     "status_filtered": status_filtered_count,
+                    "inbox_formula_filtered": inbox_filtered_count,
                     "processed_filtered": processed_filtered_count,
                     "eligible_count": len(candidates),
                     "returned_count": len(limited),
                     "max_count": max_count,
                     "include_statuses": sorted(list(include)),
+                    "inbox_formula_property": inbox_formula_property,
                     "processed_tag": processed_tag,
                 },
             },

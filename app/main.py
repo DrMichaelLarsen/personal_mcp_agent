@@ -139,7 +139,8 @@ class ProcessInboxRequest(BaseModel):
 class ProcessTaskInboxRequest(BaseModel):
     max_count: int = 50
     preview_only: bool = True
-    include_statuses: list[str] = Field(default_factory=lambda: ["Inbox"])
+    include_statuses: list[str] = Field(default_factory=lambda: ["To do", "Not started"])
+    inbox_formula_property: str | None = "Inbox"
     processed_tag: str | None = None
 
 
@@ -267,6 +268,7 @@ async def process_task_inbox(payload: ProcessTaskInboxRequest) -> dict:
                 max_count=payload.max_count,
                 preview_only=payload.preview_only,
                 include_statuses=payload.include_statuses,
+                inbox_formula_property=payload.inbox_formula_property,
                 processed_tag=payload.processed_tag or settings.task_inbox_processed_tag,
             )
         )

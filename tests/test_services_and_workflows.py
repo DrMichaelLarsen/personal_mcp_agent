@@ -10,6 +10,7 @@ from app.schemas.planning import DayPlanInput
 from app.schemas.projects import ContextRecord, ProjectCreateInput, ProjectRecord
 from app.schemas.tasks import TaskCreateInput
 from app.schemas.tasks import ProcessTaskInboxInput
+from app.schemas.tasks import TaskUpdateInput
 from app.services.calendar_service import CalendarService
 from app.services.email_service import EmailAnalysisService, EmailService
 from app.services.matching_service import MatchingService
@@ -1049,18 +1050,27 @@ def test_process_task_inbox_enriches_missing_fields_and_marks_processed():
     inbox = tasks.create_task(
         TaskCreateInput(
             title="Submit residency rotation logs",
-            status="Inbox",
+            status="To do",
             notes="Please submit by 2026-04-02",
             tags=["Email"],
         )
     )
     assert inbox.task is not None
+    tasks.update_task(
+        TaskUpdateInput(
+            task_id=inbox.task.id,
+            title="Submit residency rotation logs",
+            status="To do",
+        )
+    )
+    notion.pages[inbox.task.id]["properties"]["Inbox"] = True
 
     result = workflow.run(
         ProcessTaskInboxInput(
             max_count=20,
             preview_only=False,
-            include_statuses=["Inbox"],
+            include_statuses=["To do", "Not started"],
+            inbox_formula_property="Inbox",
             processed_tag="Inbox Processed",
         )
     )
@@ -1094,14 +1104,21 @@ def test_process_task_inbox_creates_project_when_explicitly_requested():
     inbox = tasks.create_task(
         TaskCreateInput(
             title="Kickoff planning",
-            status="Inbox",
+            status="Not started",
             notes="This is a new project. New Project: Neighborhood Clinic Rollout",
             tags=[],
         )
     )
     assert inbox.task is not None
+    notion.pages[inbox.task.id]["properties"]["Inbox"] = True
 
-    result = workflow.run(ProcessTaskInboxInput(preview_only=False, include_statuses=["Inbox"]))
+    result = workflow.run(
+        ProcessTaskInboxInput(
+            preview_only=False,
+            include_statuses=["To do", "Not started"],
+            inbox_formula_property="Inbox",
+        )
+    )
     assert result.created_projects == 1
     assert result.results[0].created_project_id is not None
     updated = tasks.get_task(inbox.task.id)
@@ -1147,16 +1164,74 @@ def test_process_task_inbox_llm_enrichment_is_used_when_enabled(tmp_path):
     inbox = tasks.create_task(
         TaskCreateInput(
             title="Task requiring llm",
-            status="Inbox",
+            status="To do",
             notes="Need strong inference",
             tags=[],
         )
     )
     assert inbox.task is not None
-    result = workflow.run(ProcessTaskInboxInput(preview_only=False, include_statuses=["Inbox"]))
+    notion.pages[inbox.task.id]["properties"]["Inbox"] = True
+    result = workflow.run(
+        ProcessTaskInboxInput(
+            preview_only=False,
+            include_statuses=["To do", "Not started"],
+            inbox_formula_property="Inbox",
+        )
+    )
     assert result.updated_count == 1
     updated = tasks.get_task(inbox.task.id)
     assert updated.importance == 140
     assert updated.scheduled == "2026-04-03"
     assert updated.deadline == "2026-04-05"
     assert updated.estimated_minutes == 55
+
+
+def test_list_inbox_candidates_filters_by_status_formula_and_processed_tag():
+    settings, notion, projects, matching, tasks, *_ = build_context()
+    candidate = tasks.create_task(
+        TaskCreateInput(
+            title="Candidate",
+            status="To do",
+            tags=["Email"],
+        )
+    )
+    assert candidate.task is not None
+    notion.pages[candidate.task.id]["properties"]["Inbox"] = True
+
+    wrong_status = tasks.create_task(
+        TaskCreateInput(
+            title="Wrong status",
+            status="Complete",
+            tags=["Email"],
+        )
+    )
+    assert wrong_status.task is not None
+    notion.pages[wrong_status.task.id]["properties"]["Inbox"] = True
+
+    formula_false = tasks.create_task(
+        TaskCreateInput(
+            title="Formula false",
+            status="To do",
+            tags=["Email"],
+        )
+    )
+    assert formula_false.task is not None
+    notion.pages[formula_false.task.id]["properties"]["Inbox"] = False
+
+    processed = tasks.create_task(
+        TaskCreateInput(
+            title="Already processed",
+            status="To do",
+            tags=["Email", "Inbox Processed"],
+        )
+    )
+    assert processed.task is not None
+    notion.pages[processed.task.id]["properties"]["Inbox"] = True
+
+    selected = tasks.list_inbox_candidates(
+        max_count=50,
+        include_statuses=["To do", "Not started"],
+        inbox_formula_property="Inbox",
+        processed_tag="Inbox Processed",
+    )
+    assert [item.id for item in selected] == [candidate.task.id]
