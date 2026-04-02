@@ -450,8 +450,15 @@ class NotionClient:
                 if and_filters:
                     payload["filter"] = {"and": and_filters}
 
-        raw = self._request("POST", f"/databases/{database_id}/query", payload)
-        return [self._normalize_page(item) for item in raw.get("results", [])]
+        results: list[dict[str, Any]] = []
+        while True:
+            raw = self._request("POST", f"/databases/{database_id}/query", payload)
+            results.extend(self._normalize_page(item) for item in raw.get("results", []))
+            if raw.get("has_more") and raw.get("next_cursor"):
+                payload["start_cursor"] = raw["next_cursor"]
+            else:
+                break
+        return results
 
     def _encode_blocks(self, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         notion_blocks: list[dict[str, Any]] = []
