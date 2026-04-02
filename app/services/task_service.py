@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from app.adapters.notion_client import NotionClient
 from app.config import Settings
 from app.schemas.tasks import TaskCreateInput, TaskRecord, TaskResult, TaskUpdateInput
@@ -8,6 +10,8 @@ from app.utils.text import similarity
 
 from app.services.matching_service import MatchingService
 from app.services.project_service import ProjectService
+
+logger = logging.getLogger(__name__)
 
 
 class TaskService:
@@ -142,15 +146,36 @@ class TaskService:
         processed_key = (processed_tag or "").strip().lower()
         all_items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
         candidates: list[TaskRecord] = []
+        status_filtered_count = 0
+        processed_filtered_count = 0
         for task in all_items:
             status_key = (task.status or "").strip().lower()
             if include and status_key not in include:
+                status_filtered_count += 1
                 continue
             tag_keys = {(tag or "").strip().lower() for tag in (task.tags or []) if (tag or "").strip()}
             if processed_key and processed_key in tag_keys:
+                processed_filtered_count += 1
                 continue
             candidates.append(task)
-        return candidates[: max(1, max_count)]
+        limited = candidates[: max(1, max_count)]
+        logger.info(
+            "Selected task inbox candidates.",
+            extra={
+                "event": "service.task.list_inbox_candidates",
+                "context": {
+                    "total_tasks": len(all_items),
+                    "status_filtered": status_filtered_count,
+                    "processed_filtered": processed_filtered_count,
+                    "eligible_count": len(candidates),
+                    "returned_count": len(limited),
+                    "max_count": max_count,
+                    "include_statuses": sorted(list(include)),
+                    "processed_tag": processed_tag,
+                },
+            },
+        )
+        return limited
 
     def find_similar_open_task(self, title: str, project_id: str | None = None) -> tuple[TaskRecord | None, float]:
         def _normalize_candidate(value: str) -> str:

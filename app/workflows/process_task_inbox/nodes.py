@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, timedelta
 
@@ -9,6 +10,8 @@ from app.schemas.projects import ProjectCreateInput
 from app.schemas.tasks import ProcessTaskInboxResult, TaskInboxItemResult, TaskUpdateInput
 from app.utils.confidence import build_confidence
 from app.workflows.process_task_inbox.state import ProcessTaskInboxState
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_explicit_project_name(text: str) -> str | None:
@@ -129,7 +132,14 @@ def _llm_enrichment_for_task(task, deps: dict) -> tuple[dict, list[ReviewItem]]:
             operation="task_inbox_enrichment",
             metadata={"task_id": task.id},
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Task inbox LLM enrichment failed; using deterministic fallback.",
+            extra={
+                "event": "workflow.process_task_inbox.enrich.llm_failed",
+                "context": {"task_id": task.id, "error": str(exc), "tier": tier, "model": model},
+            },
+        )
         return {}, [
             ReviewItem(
                 item_type="task_inbox_llm",
@@ -138,6 +148,13 @@ def _llm_enrichment_for_task(task, deps: dict) -> tuple[dict, list[ReviewItem]]:
                 confidence=build_confidence(0.4, "Task enrichment fell back to deterministic rules.", True),
             )
         ]
+    logger.info(
+        "Task inbox LLM enrichment completed.",
+        extra={
+            "event": "workflow.process_task_inbox.enrich.llm_complete",
+            "context": {"task_id": task.id, "model": model, "returned_keys": sorted(list((data or {}).keys()))},
+        },
+    )
     return data or {}, []
 
 
@@ -148,6 +165,18 @@ def fetch_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSta
         max_count=request.max_count,
         include_statuses=request.include_statuses,
         processed_tag=request.processed_tag,
+    )
+    logger.info(
+        "Fetched task inbox candidates from Notion.",
+        extra={
+            "event": "workflow.process_task_inbox.fetch.complete",
+            "context": {
+                "candidate_count": len(tasks),
+                "max_count": request.max_count,
+                "include_statuses": request.include_statuses,
+                "processed_tag": request.processed_tag,
+            },
+        },
     )
     return {**state, "tasks": tasks}
 
@@ -162,6 +191,18 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
     contexts = project_service.list_contexts()
     active_projects = project_service.list_active_projects()
     results: list[TaskInboxItemResult] = []
+    logger.info(
+        "Starting task inbox enrichment stage.",
+        extra={
+            "event": "workflow.process_task_inbox.enrich.start",
+            "context": {
+                "task_count": len(state.get("tasks", [])),
+                "preview_only": preview_only,
+                "context_count": len(contexts),
+                "active_project_count": len(active_projects),
+            },
+        },
+    )
 
     for task in state.get("tasks", []):
         content = f"{task.title}\n\n{task.notes or ''}"
@@ -263,6 +304,20 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
             )
             updated = True
 
+        logger.info(
+            "Processed task inbox candidate.",
+            extra={
+                "event": "workflow.process_task_inbox.enrich.task_processed",
+                "context": {
+                    "task_id": task.id,
+                    "updated": updated,
+                    "created_project": bool(created_project_id),
+                    "changed_fields": sorted(list(changed.keys())),
+                    "review_item_count": len(review_items),
+                },
+            },
+        )
+
         results.append(
             TaskInboxItemResult(
                 task_id=task.id,
@@ -272,6 +327,18 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
                 review_items=review_items,
             )
         )
+    logger.info(
+        "Completed task inbox enrichment stage.",
+        extra={
+            "event": "workflow.process_task_inbox.enrich.complete",
+            "context": {
+                "processed_count": len(results),
+                "updated_count": sum(1 for item in results if item.updated),
+                "created_projects": sum(1 for item in results if item.created_project_id),
+                "review_item_count": sum(len(item.review_items) for item in results),
+            },
+        },
+    )
     return {**state, "results": results}
 
 
@@ -284,5 +351,17 @@ def build_result(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
         updated_count=sum(1 for item in results if item.updated),
         created_projects=sum(1 for item in results if item.created_project_id),
         results=results,
+    )
+    logger.info(
+        "Built process_task_inbox final result.",
+        extra={
+            "event": "workflow.process_task_inbox.result.built",
+            "context": {
+                "preview_only": final.preview_only,
+                "processed_count": final.processed_count,
+                "updated_count": final.updated_count,
+                "created_projects": final.created_projects,
+            },
+        },
     )
     return {**state, "result": final}
