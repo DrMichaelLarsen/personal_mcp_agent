@@ -2,3 +2,6 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+.claude/worktrees/
+.claude/worktrees/silly-blackwell
+.claude/worktrees/youthful-bhaskara
