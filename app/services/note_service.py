@@ -183,12 +183,23 @@ class NoteService:
     def _to_record(self, raw: dict) -> NoteRecord:
         props = raw.get("properties", {})
         cfg = self.settings.notes_db
+
+        def _as_single_id(value):
+            if isinstance(value, list):
+                if not value:
+                    return None
+                first = value[0]
+                return first if isinstance(first, str) else str(first)
+            if value is None:
+                return None
+            return value if isinstance(value, str) else str(value)
+
         return NoteRecord(
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             content=props.get(cfg.notes_property) if cfg.notes_property else None,
-            project_id=props.get(cfg.relation_property) if cfg.relation_property else None,
-            area_id=props.get(cfg.area_property) if cfg.area_property else None,
+            project_id=_as_single_id(props.get(cfg.relation_property)) if cfg.relation_property else None,
+            area_id=_as_single_id(props.get(cfg.area_property)) if cfg.area_property else None,
             source_url=props.get(cfg.url_property) if cfg.url_property else None,
             tags=props.get(cfg.tags_property, []) if cfg.tags_property else [],
             ai_cost=props.get(cfg.ai_cost_property) if cfg.ai_cost_property else None,

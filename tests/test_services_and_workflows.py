@@ -1403,3 +1403,21 @@ def test_process_notes_inbox_filters_only_formula_inbox_true():
     )
     assert result.processed_count == 1
     assert result.results[0].note_id == included.note.id
+
+
+def test_note_record_mapping_coerces_relation_lists_for_project_and_area():
+    settings, _, projects, matching, tasks, notes, *_ = build_context()
+    raw = {
+        "id": "note-raw-1",
+        "title": "Fallback title",
+        "properties": {
+            settings.notes_db.title_property: "Mapped note title",
+            settings.notes_db.relation_property: ["project-123", "project-456"],
+            settings.notes_db.area_property: ["area-123"],
+            settings.notes_db.tags_property: ["Inbox"],
+        },
+    }
+    mapped = notes._to_record(raw)
+    assert mapped.title == "Mapped note title"
+    assert mapped.project_id == "project-123"
+    assert mapped.area_id == "area-123"
