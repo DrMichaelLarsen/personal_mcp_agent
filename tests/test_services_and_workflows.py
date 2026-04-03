@@ -1282,8 +1282,16 @@ def test_process_notes_inbox_assigns_project_and_area_marks_processed_and_append
         )
     )
     assert created.note is not None
+    notion.pages[created.note.id]["properties"]["Inbox"] = True
 
-    result = workflow.run(ProcessNotesInboxInput(preview_only=False, max_count=20, processed_tag="Inbox Processed"))
+    result = workflow.run(
+        ProcessNotesInboxInput(
+            preview_only=False,
+            max_count=20,
+            inbox_formula_property="Inbox",
+            processed_tag="Inbox Processed",
+        )
+    )
     assert result.processed_count == 1
     assert result.updated_count == 1
     updated = notion.get_page(created.note.id)
@@ -1333,6 +1341,7 @@ def test_process_notes_inbox_llm_can_set_typed_additional_fields_and_accumulate_
         )
     )
     assert created.note is not None
+    notion.pages[created.note.id]["properties"]["Inbox"] = True
 
     notes.get_notes_database_field_catalog = lambda: [
         {"name": "Category", "type": "select", "options": ["Reference", "Idea"]},
@@ -1347,7 +1356,14 @@ def test_process_notes_inbox_llm_can_set_typed_additional_fields_and_accumulate_
         metadata={"note_id": created.note.id},
     )
 
-    result = workflow.run(ProcessNotesInboxInput(preview_only=False, max_count=20, processed_tag="Inbox Processed"))
+    result = workflow.run(
+        ProcessNotesInboxInput(
+            preview_only=False,
+            max_count=20,
+            inbox_formula_property="Inbox",
+            processed_tag="Inbox Processed",
+        )
+    )
     assert result.updated_count == 1
     changed = result.results[0].changed_fields
     assert changed.get("Category") == "Reference"
@@ -1357,3 +1373,33 @@ def test_process_notes_inbox_llm_can_set_typed_additional_fields_and_accumulate_
     assert updated["properties"]["Category"] == "Reference"
     assert updated["properties"]["Priority Score"] == 7
     assert (updated["properties"].get(settings.notes_db.ai_cost_property) or 0) > 0
+
+
+def test_process_notes_inbox_filters_only_formula_inbox_true():
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    project = projects.create_project(ProjectCreateInput(title="Residency", area_id="area-1", status="Active"))
+    assert project.id
+    workflow = ProcessNotesInboxWorkflow(
+        {
+            "note_service": notes,
+            "project_service": projects,
+            "matching_service": matching,
+        }
+    )
+    included = notes.create_note(NoteCreateInput(title="Residency: include me", content="meeting recap"))
+    excluded = notes.create_note(NoteCreateInput(title="Residency: skip me", content="meeting recap"))
+    assert included.note is not None
+    assert excluded.note is not None
+    notion.pages[included.note.id]["properties"]["Inbox"] = True
+    notion.pages[excluded.note.id]["properties"]["Inbox"] = False
+
+    result = workflow.run(
+        ProcessNotesInboxInput(
+            preview_only=True,
+            max_count=20,
+            inbox_formula_property="Inbox",
+            processed_tag="Inbox Processed",
+        )
+    )
+    assert result.processed_count == 1
+    assert result.results[0].note_id == included.note.id

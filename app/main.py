@@ -147,6 +147,7 @@ class ProcessTaskInboxRequest(BaseModel):
 class ProcessNotesInboxRequest(BaseModel):
     max_count: int = 50
     preview_only: bool = True
+    inbox_formula_property: str | None = "Inbox"
     processed_tag: str | None = None
 
 
@@ -284,6 +285,7 @@ async def process_notes_inbox(payload: ProcessNotesInboxRequest) -> dict:
             ProcessNotesInboxInput(
                 max_count=payload.max_count,
                 preview_only=payload.preview_only,
+                inbox_formula_property=payload.inbox_formula_property,
                 processed_tag=payload.processed_tag or settings.notes_inbox_processed_tag,
             )
         )

@@ -51,6 +51,7 @@ class NoteUpdateInput(BaseModel):
 class ProcessNotesInboxInput(BaseModel):
     max_count: int = 50
     preview_only: bool = True
+    inbox_formula_property: str | None = "Inbox"
     processed_tag: str = "Inbox Processed"
 
 

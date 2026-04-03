@@ -116,12 +116,22 @@ class NoteService:
         raw = self.notion.create_page(cfg.database_id, properties, children=children)
         return NoteResult(created=True, note=self._to_record(raw), confidence=confidence, review_items=review_items, message="Note created.")
 
-    def list_inbox_candidates(self, max_count: int = 50, processed_tag: str = "Inbox Processed") -> list[NoteRecord]:
+    def list_inbox_candidates(
+        self,
+        max_count: int = 50,
+        processed_tag: str = "Inbox Processed",
+        inbox_formula_property: str | None = "Inbox",
+    ) -> list[NoteRecord]:
         cfg = self.settings.notes_db
         processed_key = (processed_tag or "").strip().lower()
+        inbox_formula_key = (inbox_formula_property or "").strip()
         all_items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
         candidates: list[NoteRecord] = []
         for note in all_items:
+            if inbox_formula_key:
+                inbox_value = (note.raw.get("properties", {}) if isinstance(note.raw, dict) else {}).get(inbox_formula_key)
+                if not bool(inbox_value):
+                    continue
             tag_keys = {(tag or "").strip().lower() for tag in (note.tags or []) if (tag or "").strip()}
             if processed_key and processed_key in tag_keys:
                 continue

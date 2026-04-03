@@ -171,6 +171,7 @@ def fetch_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInboxS
     note_service = deps["note_service"]
     notes = note_service.list_inbox_candidates(
         max_count=request.max_count,
+        inbox_formula_property=request.inbox_formula_property,
         processed_tag=request.processed_tag,
     )
     return {**state, "notes": notes}
