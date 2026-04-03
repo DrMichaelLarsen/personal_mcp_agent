@@ -464,6 +464,22 @@ def _extract_explicit_project_name(subject: str, body: str, fallback: str | None
     return fallback
 
 
+def _extract_referenced_project_name(subject: str, body: str) -> str | None:
+    text = f"{subject}\n{body}"
+    patterns = [
+        r"\b(?:this\s+is\s+for|for|about|regarding)\s+([A-Za-z0-9][A-Za-z0-9 '&\-/]{2,80}?)\s+project\b",
+        r"\bproject\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 '&\-/]{2,80})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        candidate = (match.group(1) or "").strip(" .,:;\t\n\r\"'")
+        if candidate:
+            return candidate
+    return None
+
+
 def extract_candidates(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     tasks: dict[str, ExtractedTaskCandidate] = {}
     notes: dict[str, ExtractedNoteCandidate] = {}
@@ -530,7 +546,11 @@ def match_projects(state: ProcessEmailsState, deps: dict) -> ProcessEmailsState:
     analyses = state.get("analyses", {})
     for email in state.get("emails", []):
         analysis = analyses.get(email.id)
-        token = (analysis.suggested_project_name if analysis and analysis.suggested_project_name else email.subject.split(":")[0]).strip()
+        explicit_project_name = _extract_referenced_project_name(email.subject, email.body)
+        token = (
+            explicit_project_name
+            or (analysis.suggested_project_name if analysis and analysis.suggested_project_name else email.subject.split(":")[0])
+        ).strip()
         if token:
             matches[email.id] = matching_service.match_project(
                 token,

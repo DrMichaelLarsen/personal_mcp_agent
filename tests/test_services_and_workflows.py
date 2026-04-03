@@ -336,6 +336,42 @@ def test_email_label_based_routing_task_and_note():
     assert categories["label-note-1"] == "note"
 
 
+def test_email_note_with_explicit_for_x_project_phrase_prefers_project_match():
+    _, _, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    target_project = projects.create_project(
+        ProjectCreateInput(title="Residency Rotation Tracking", area_id="area-1", status="Active")
+    )
+    workflow = ProcessEmailsWorkflow(
+        {
+            "email_service": email,
+            "matching_service": matching,
+            "project_service": projects,
+            "task_service": tasks,
+            "note_service": notes,
+            "calendar_service": calendar,
+        }
+    )
+    result = workflow.run(
+        ProcessEmailsInput(
+            preview_only=False,
+            input_emails=[
+                EmailMessage(
+                    id="explicit-project-note-1",
+                    thread_id="explicit-project-thread-1",
+                    subject="Reference notes",
+                    sender="chief@example.com",
+                    body="This is for Residency Rotation Tracking project. Keep these notes for later.",
+                    labels=["note"],
+                )
+            ],
+        )
+    )
+    created_note = result.results[0].created_note
+    assert created_note is not None
+    assert created_note.note is not None
+    assert created_note.note.project_id == target_project.id
+
+
 def test_event_email_creates_calendar_entry_with_ai_review_prefix():
     _, _, projects, matching, tasks, notes, calendar, email, _ = build_context()
     projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
