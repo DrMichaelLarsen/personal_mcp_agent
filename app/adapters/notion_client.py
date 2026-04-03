@@ -424,41 +424,78 @@ class NotionClient:
         return self._normalize_page(raw)
 
     def query_database(self, database_id: str, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        property_types = self._get_database_property_types(database_id)
+        property_schema = self._get_database_schema(database_id)
+
+        def _title_property_name() -> str | None:
+            for name, ptype in property_types.items():
+                if ptype == "title":
+                    return name
+            return None
+
+        def _build_property_filter(prop: str, value: Any) -> dict[str, Any] | None:
+            ptype = (property_types.get(prop) or "").strip().lower()
+
+            if isinstance(value, str):
+                if ptype == "date":
+                    return {"property": prop, "date": {"equals": value}}
+                if ptype == "title":
+                    return {"property": prop, "title": {"equals": value}}
+                if ptype == "rich_text":
+                    return {"property": prop, "rich_text": {"equals": value}}
+                if ptype == "select":
+                    return {"property": prop, "select": {"equals": value}}
+                if ptype == "status":
+                    return {"property": prop, "status": {"equals": value}}
+                if ptype == "url":
+                    return {"property": prop, "url": {"equals": value}}
+                if ptype == "email":
+                    return {"property": prop, "email": {"equals": value}}
+                if ptype == "phone_number":
+                    return {"property": prop, "phone_number": {"equals": value}}
+                if ptype == "relation":
+                    return {"property": prop, "relation": {"contains": value}}
+                if ptype == "people":
+                    return {"property": prop, "people": {"contains": value}}
+                if ptype == "multi_select":
+                    return {"property": prop, "multi_select": {"contains": value}}
+                # For unknown/unmapped property types, skip to avoid Notion 400s.
+                return None
+
+            if isinstance(value, bool):
+                if ptype == "checkbox":
+                    return {"property": prop, "checkbox": {"equals": value}}
+                return None
+
+            if isinstance(value, int | float):
+                if ptype == "number":
+                    return {"property": prop, "number": {"equals": value}}
+                return None
+
+            return None
+
         payload: dict[str, Any] = {}
         if filters:
             query_text = filters.get("query")
             if isinstance(query_text, str) and query_text.strip():
-                payload["filter"] = {
-                    "or": [
-                        {
-                            "property": "Name",
-                            "title": {"contains": query_text},
-                        }
-                    ]
-                }
+                title_property = _title_property_name()
+                if title_property:
+                    payload["filter"] = {
+                        "or": [
+                            {
+                                "property": title_property,
+                                "title": {"contains": query_text},
+                            }
+                        ]
+                    }
             else:
                 and_filters: list[dict[str, Any]] = []
                 for prop, value in filters.items():
                     if prop == "query" or value is None:
                         continue
-                    if isinstance(value, str):
-                        if re.match(r"^\d{4}-\d{2}-\d{2}", value):
-                            and_filters.append({"property": prop, "date": {"equals": value}})
-                        else:
-                            and_filters.append(
-                                {
-                                    "or": [
-                                        {"property": prop, "rich_text": {"equals": value}},
-                                        {"property": prop, "title": {"equals": value}},
-                                        {"property": prop, "select": {"equals": value}},
-                                        {"property": prop, "status": {"equals": value}},
-                                    ]
-                                }
-                            )
-                    elif isinstance(value, bool):
-                        and_filters.append({"property": prop, "checkbox": {"equals": value}})
-                    elif isinstance(value, int | float):
-                        and_filters.append({"property": prop, "number": {"equals": value}})
+                    notion_filter = _build_property_filter(prop, value)
+                    if notion_filter:
+                        and_filters.append(notion_filter)
                 if and_filters:
                     payload["filter"] = {"and": and_filters}
 

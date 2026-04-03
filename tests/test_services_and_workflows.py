@@ -999,6 +999,77 @@ def test_notion_client_chunks_children_blocks_in_100s():
     assert len(chunks[1]) == 50
 
 
+def test_notion_client_query_database_uses_typed_filters_and_skips_unknown_properties():
+    client = NotionClient(api_key="test")
+    captured: dict = {}
+
+    client._get_database_property_types = lambda database_id: {
+        "Task": "title",
+        "Status": "status",
+        "Project": "relation",
+        "Done": "checkbox",
+    }
+    client._get_database_schema = lambda database_id: {}
+
+    def _fake_request(method: str, path: str, payload: dict | None = None):
+        captured["method"] = method
+        captured["path"] = path
+        captured["payload"] = payload or {}
+        return {"results": [], "has_more": False}
+
+    client._request = _fake_request
+
+    client.query_database(
+        "tasks-db",
+        {
+            "Status": "To do",
+            "Project": "c9fd4425-0bfc-4f4f-8a18-bdc42f7d1778",
+            "Done": False,
+            "Unknown Property": "ignored",
+        },
+    )
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/databases/tasks-db/query"
+    and_filters = captured["payload"]["filter"]["and"]
+    assert {item["property"] for item in and_filters} == {"Status", "Project", "Done"}
+    status_filter = next(item for item in and_filters if item["property"] == "Status")
+    relation_filter = next(item for item in and_filters if item["property"] == "Project")
+    checkbox_filter = next(item for item in and_filters if item["property"] == "Done")
+    assert status_filter == {"property": "Status", "status": {"equals": "To do"}}
+    assert relation_filter == {"property": "Project", "relation": {"contains": "c9fd4425-0bfc-4f4f-8a18-bdc42f7d1778"}}
+    assert checkbox_filter == {"property": "Done", "checkbox": {"equals": False}}
+
+
+def test_notion_client_query_database_uses_actual_title_property_for_query_search():
+    client = NotionClient(api_key="test")
+    captured: dict = {}
+
+    client._get_database_property_types = lambda database_id: {"Task": "title", "Status": "status"}
+    client._get_database_schema = lambda database_id: {}
+
+    def _fake_request(method: str, path: str, payload: dict | None = None):
+        captured["method"] = method
+        captured["path"] = path
+        captured["payload"] = payload or {}
+        return {"results": [], "has_more": False}
+
+    client._request = _fake_request
+
+    client.query_database("tasks-db", {"query": "residency"})
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/databases/tasks-db/query"
+    assert captured["payload"]["filter"] == {
+        "or": [
+            {
+                "property": "Task",
+                "title": {"contains": "residency"},
+            }
+        ]
+    }
+
+
 def test_context_matching_for_email_defaults_to_computer_over_ambiguous_context():
     settings = get_settings()
     matching = MatchingService(settings)
