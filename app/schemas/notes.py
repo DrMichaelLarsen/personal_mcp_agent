@@ -27,6 +27,7 @@ class NoteRecord(BaseModel):
     area_id: str | None = None
     source_url: str | None = None
     tags: list[str] = Field(default_factory=list)
+    ai_cost: float | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -44,6 +45,7 @@ class NoteUpdateInput(BaseModel):
     area_id: str | None = None
     tags: list[str] | None = None
     ai_cost: float | None = None
+    additional_properties: dict[str, Any] | None = None
 
 
 class ProcessNotesInboxInput(BaseModel):

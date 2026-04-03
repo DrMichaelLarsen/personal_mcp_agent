@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 from app.schemas.common import ReviewItem
 from app.schemas.notes import NotesInboxItemResult, NoteUpdateInput, ProcessNotesInboxResult
@@ -45,20 +46,26 @@ def _llm_enrichment_for_note(note, deps: dict) -> tuple[dict, list[ReviewItem]]:
         return {}, []
     tier = settings.llm.notes_inbox_tier
     model = cost_service.get_tier_model(tier) if cost_service else settings.llm.standard_model
+    note_service = deps.get("note_service")
+    field_catalog = note_service.get_notes_database_field_catalog() if note_service else []
     system_prompt = (
         "You enrich Notion notes inbox items. Return strict JSON keys only: "
         "project_name (string or null), area_name (string or null), "
-        "tags (array of short category strings or null), rationale (array of strings)."
+        "tags (array of short category strings or null), "
+        "additional_properties (object keyed by exact property name -> value, only from field_catalog, or null), "
+        "rationale (array of strings)."
     )
     user_prompt = json.dumps(
         {
             "note_id": note.id,
             "title": note.title,
             "content": note.content,
+            "field_catalog": field_catalog,
             "existing": {
                 "project_id": note.project_id,
                 "area_id": note.area_id,
                 "tags": note.tags,
+                "properties": (note.raw.get("properties", {}) if isinstance(note.raw, dict) else {}),
             },
         }
     )
@@ -82,6 +89,83 @@ def _llm_enrichment_for_note(note, deps: dict) -> tuple[dict, list[ReviewItem]]:
     return data or {}, []
 
 
+def _coerce_value_for_field_type(value: Any, field_type: str, options: list[str] | None = None) -> Any:
+    normalized_type = (field_type or "").strip().lower()
+    allowed = {(item or "").strip() for item in (options or []) if isinstance(item, str) and item.strip()}
+
+    if normalized_type in {"title", "rich_text", "url", "email", "phone_number"}:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    if normalized_type == "number":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+        return None
+
+    if normalized_type == "checkbox":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "yes", "1", "checked"}:
+                return True
+            if lowered in {"false", "no", "0", "unchecked"}:
+                return False
+        return None
+
+    if normalized_type == "date":
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            start_value = value.get("start")
+            if isinstance(start_value, str) and start_value.strip():
+                return start_value.strip()
+        return None
+
+    if normalized_type in {"status", "select"}:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        selected = value.strip()
+        if allowed and selected not in allowed:
+            return None
+        return selected
+
+    if normalized_type == "multi_select":
+        items: list[str] = []
+        if isinstance(value, str) and value.strip():
+            items = [value.strip()]
+        elif isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+        if allowed:
+            items = [item for item in items if item in allowed]
+        deduped: list[str] = []
+        for item in items:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped if deduped else None
+
+    if normalized_type in {"relation", "people"}:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list):
+            values = [str(item).strip() for item in value if str(item).strip()]
+            if not values:
+                return None
+            return values[0] if len(values) == 1 else values
+        return None
+
+    return None
+
+
 def fetch_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInboxState:
     request = deps["request"]
     note_service = deps["note_service"]
@@ -100,6 +184,23 @@ def enrich_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInbox
     matching_service = deps["matching_service"]
 
     active_projects = project_service.list_active_projects()
+    field_catalog = note_service.get_notes_database_field_catalog()
+    field_catalog_by_name = {
+        item.get("name"): item
+        for item in field_catalog
+        if isinstance(item, dict) and isinstance(item.get("name"), str) and bool(item.get("name", "").strip())
+    }
+    cfg = note_service.settings.notes_db
+    managed_properties = {
+        cfg.title_property,
+        cfg.notes_property,
+        cfg.relation_property,
+        cfg.area_property,
+        cfg.tags_property,
+        cfg.ai_cost_property,
+        cfg.url_property,
+        cfg.source_id_property,
+    }
     results: list[NotesInboxItemResult] = []
 
     for note in state.get("notes", []):
@@ -111,6 +212,27 @@ def enrich_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInbox
 
         llm_data, llm_reviews = _llm_enrichment_for_note(note, deps)
         review_items.extend(llm_reviews)
+
+        llm_additional_properties = llm_data.get("additional_properties") if isinstance(llm_data, dict) else None
+        additional_properties: dict[str, Any] = {}
+        if isinstance(llm_additional_properties, dict):
+            existing_properties = note.raw.get("properties", {}) if isinstance(note.raw, dict) else {}
+            for key, value in llm_additional_properties.items():
+                if not isinstance(key, str) or not key.strip() or key in managed_properties:
+                    continue
+                field_info = field_catalog_by_name.get(key)
+                if not field_info:
+                    continue
+                field_type = field_info.get("type")
+                if not isinstance(field_type, str):
+                    continue
+                coerced = _coerce_value_for_field_type(value, field_type, field_info.get("options") if isinstance(field_info.get("options"), list) else None)
+                if coerced is None:
+                    continue
+                if existing_properties.get(key) == coerced:
+                    continue
+                additional_properties[key] = coerced
+                changed[key] = coerced
 
         # --- Project ---
         if not project_id:
@@ -182,7 +304,7 @@ def enrich_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInbox
             )
             ai_cost_value = float(ai_summary.get("total_estimated_cost", 0.0) or 0.0)
             if ai_cost_value > 0:
-                changed["ai_cost"] = round(ai_cost_value, 8)
+                changed["ai_cost"] = round((note.ai_cost or 0.0) + ai_cost_value, 8)
 
         updated = False
         if changed and not preview_only:
@@ -193,8 +315,10 @@ def enrich_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInbox
                     area_id=changed.get("area_id"),
                     tags=changed.get("tags"),
                     ai_cost=changed.get("ai_cost"),
+                    additional_properties=additional_properties or None,
                 )
             )
+            note_service.append_ai_decision_note(note.id, changed, source="process_notes_inbox")
             updated = True
 
         results.append(

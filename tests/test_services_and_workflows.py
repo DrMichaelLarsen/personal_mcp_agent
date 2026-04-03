@@ -6,6 +6,7 @@ from app.services.cost_service import CostService
 from app.schemas.calendar import CalendarEvent
 from app.schemas.email import EmailMessage, ProcessEmailsInput
 from app.schemas.notes import NoteCreateInput
+from app.schemas.notes import ProcessNotesInboxInput
 from app.schemas.planning import DayPlanInput
 from app.schemas.projects import ContextRecord, ProjectCreateInput, ProjectRecord
 from app.schemas.tasks import TaskCreateInput
@@ -21,6 +22,7 @@ from app.services.task_service import TaskService
 from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
 from app.workflows.process_task_inbox.graph import ProcessTaskInboxWorkflow
+from app.workflows.process_notes_inbox.graph import ProcessNotesInboxWorkflow
 from app.adapters.calendar_client import CalendarClient
 from app.adapters.notion_client import NotionClient
 from app.schemas.calendar import EventCreateInput
@@ -1257,3 +1259,101 @@ def test_list_inbox_candidates_legacy_inbox_status_alias_includes_todo_not_start
     selected_ids = {item.id for item in selected}
     assert todo.task.id in selected_ids
     assert not_started.task.id in selected_ids
+
+
+def test_process_notes_inbox_assigns_project_and_area_marks_processed_and_appends_ai_log():
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    _, _, leaf = seed_area_tree(settings, notion)
+    project = projects.create_project(ProjectCreateInput(title="Residency", area_id=leaf["id"], status="Active"))
+    assert project.id
+
+    workflow = ProcessNotesInboxWorkflow(
+        {
+            "note_service": notes,
+            "project_service": projects,
+            "matching_service": matching,
+        }
+    )
+    created = notes.create_note(
+        NoteCreateInput(
+            title="Residency: weekly meeting notes",
+            content="Meeting recap and decisions.",
+            tags=["Inbox"],
+        )
+    )
+    assert created.note is not None
+
+    result = workflow.run(ProcessNotesInboxInput(preview_only=False, max_count=20, processed_tag="Inbox Processed"))
+    assert result.processed_count == 1
+    assert result.updated_count == 1
+    updated = notion.get_page(created.note.id)
+    assert updated["properties"][settings.notes_db.relation_property] == project.id
+    assert updated["properties"][settings.notes_db.area_property] == leaf["id"]
+    assert "Inbox Processed" in updated["properties"][settings.notes_db.tags_property]
+    ai_log_text = "\n".join(block.get("text", "") for block in updated.get("children", []))
+    assert "AI Decision Log" in ai_log_text
+    assert "project_id" in ai_log_text
+
+
+def test_process_notes_inbox_llm_can_set_typed_additional_fields_and_accumulate_ai_cost(tmp_path):
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.llm.enabled = True
+    settings.llm.use_for_notes_inbox = True
+    settings.llm.cost_ledger_path = str(tmp_path / "notes_inbox_costs.jsonl")
+    cost_service = CostService(settings.llm)
+    llm = FakeLLMClient(
+        response_map={
+            "Clinical reference note": {
+                "project_name": None,
+                "area_name": None,
+                "tags": ["Reference"],
+                "additional_properties": {
+                    "Category": "Reference",
+                    "Priority Score": 7,
+                },
+                "rationale": ["Classified as reference material with moderate priority."],
+            }
+        }
+    )
+    workflow = ProcessNotesInboxWorkflow(
+        {
+            "note_service": notes,
+            "project_service": projects,
+            "matching_service": matching,
+            "llm_client": llm,
+            "settings": settings,
+            "cost_service": cost_service,
+        }
+    )
+    created = notes.create_note(
+        NoteCreateInput(
+            title="Clinical reference note",
+            content="Research summary for future use.",
+            tags=[],
+        )
+    )
+    assert created.note is not None
+
+    notes.get_notes_database_field_catalog = lambda: [
+        {"name": "Category", "type": "select", "options": ["Reference", "Idea"]},
+        {"name": "Priority Score", "type": "number", "options": []},
+    ]
+    cost_service.record_usage(
+        provider="openai",
+        model=settings.llm.standard_model,
+        operation="notes_inbox_enrichment",
+        input_tokens=500,
+        output_tokens=100,
+        metadata={"note_id": created.note.id},
+    )
+
+    result = workflow.run(ProcessNotesInboxInput(preview_only=False, max_count=20, processed_tag="Inbox Processed"))
+    assert result.updated_count == 1
+    changed = result.results[0].changed_fields
+    assert changed.get("Category") == "Reference"
+    assert changed.get("Priority Score") == 7
+    assert (changed.get("ai_cost") or 0) > 0
+    updated = notion.get_page(created.note.id)
+    assert updated["properties"]["Category"] == "Reference"
+    assert updated["properties"]["Priority Score"] == 7
+    assert (updated["properties"].get(settings.notes_db.ai_cost_property) or 0) > 0

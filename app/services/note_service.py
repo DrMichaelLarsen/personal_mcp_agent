@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.adapters.notion_client import NotionClient
 from app.config import Settings
 from app.schemas.notes import NoteCreateInput, NoteRecord, NoteResult, NoteUpdateInput
@@ -21,6 +23,58 @@ class NoteService:
         self.project_service = project_service
         self.matching_service = matching_service
         self.settings = settings
+
+    def get_notes_database_field_catalog(self) -> list[dict[str, Any]]:
+        cfg = self.settings.notes_db
+        database_id = cfg.database_id
+        if not database_id:
+            return []
+        getter = getattr(self.notion, "_get_database_schema", None)
+        if not callable(getter):
+            return []
+        try:
+            schema_raw = getter(database_id) or {}
+        except Exception:
+            return []
+        if not isinstance(schema_raw, dict):
+            return []
+        catalog: list[dict[str, Any]] = []
+        for name, definition in schema_raw.items():
+            if not isinstance(definition, dict):
+                continue
+            property_type = definition.get("type")
+            if not property_type:
+                continue
+            if property_type in {
+                "formula",
+                "rollup",
+                "created_time",
+                "created_by",
+                "last_edited_time",
+                "last_edited_by",
+                "unique_id",
+                "verification",
+            }:
+                continue
+            options: list[str] = []
+            nested = definition.get(property_type)
+            if isinstance(nested, dict):
+                raw_options = nested.get("options")
+                if isinstance(raw_options, list):
+                    for opt in raw_options:
+                        if not isinstance(opt, dict):
+                            continue
+                        option_name = opt.get("name")
+                        if isinstance(option_name, str) and option_name.strip():
+                            options.append(option_name)
+            catalog.append(
+                {
+                    "name": name,
+                    "type": property_type,
+                    "options": options,
+                }
+            )
+        return sorted(catalog, key=lambda item: item["name"].lower())
 
     def create_note(self, data: NoteCreateInput) -> NoteResult:
         cfg = self.settings.notes_db
@@ -76,18 +130,41 @@ class NoteService:
 
     def update_note(self, data: NoteUpdateInput) -> NoteRecord:
         cfg = self.settings.notes_db
-        properties = {
-            key: value
-            for key, value in {
-                cfg.relation_property: data.project_id,
-                cfg.area_property: data.area_id,
-                cfg.tags_property: data.tags,
-                cfg.ai_cost_property: data.ai_cost,
-            }.items()
-            if key is not None and value is not None
+        properties = {}
+        base_properties = {
+            cfg.relation_property: data.project_id,
+            cfg.area_property: data.area_id,
+            cfg.tags_property: data.tags,
+            cfg.ai_cost_property: data.ai_cost,
         }
+        for key, value in base_properties.items():
+            if key is not None and value is not None:
+                properties[key] = value
+        for key, value in (data.additional_properties or {}).items():
+            if key and value is not None:
+                properties[key] = value
         raw = self.notion.update_page(data.note_id, properties)
         return self._to_record(raw)
+
+    def append_ai_decision_note(self, note_id: str, changed_fields: dict, source: str = "process_notes_inbox") -> None:
+        if not changed_fields:
+            return
+
+        def _format_value(value):
+            if isinstance(value, list):
+                return ", ".join(str(item) for item in value) if value else "(none)"
+            if value is None:
+                return "(none)"
+            return str(value)
+
+        lines = [
+            "## AI Decision Log",
+            f"Source: {source}",
+            "Changes applied:",
+        ]
+        for key in sorted(changed_fields.keys()):
+            lines.append(f"- {key}: {_format_value(changed_fields.get(key))}")
+        self.notion.append_markdown(note_id, "\n".join(lines))
 
     def search_notes(self, query: str) -> list[NoteRecord]:
         cfg = self.settings.notes_db
@@ -104,5 +181,6 @@ class NoteService:
             area_id=props.get(cfg.area_property) if cfg.area_property else None,
             source_url=props.get(cfg.url_property) if cfg.url_property else None,
             tags=props.get(cfg.tags_property, []) if cfg.tags_property else [],
+            ai_cost=props.get(cfg.ai_cost_property) if cfg.ai_cost_property else None,
             raw=raw,
         )
