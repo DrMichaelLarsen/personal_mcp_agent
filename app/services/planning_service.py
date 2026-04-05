@@ -188,6 +188,8 @@ class PlanningService:
             include_due_tomorrow=include_due_tomorrow,
             max_candidates=max_candidates,
         )
+        checklist_candidates = [item for item in candidates if item.get("item_type") == "checklist_item"]
+        task_candidates = [item for item in candidates if item.get("item_type") == "task"]
         free_slots = self._compute_free_slots(work_start, work_end, intervals)
         logger.info(
             "Computed scheduling candidates and free slots.",
@@ -195,6 +197,18 @@ class PlanningService:
                 "event": "service.planning.build_day_schedule.candidates",
                 "context": {
                     "candidate_count": len(candidates),
+                    "task_candidate_count": len(task_candidates),
+                    "checklist_candidate_count": len(checklist_candidates),
+                    "checklist_candidates": [
+                        {
+                            "id": item.get("id"),
+                            "title": item.get("title"),
+                            "deadline": item.get("deadline"),
+                            "score": item.get("score"),
+                            "urgency_rank": item.get("urgency_rank"),
+                        }
+                        for item in checklist_candidates
+                    ],
                     "free_slot_count": len(free_slots),
                     "free_slots": [{"start": slot[0].isoformat(), "end": slot[1].isoformat()} for slot in free_slots],
                 },
