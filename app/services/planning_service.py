@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timedelta
 
 from app.config import Settings
@@ -9,6 +10,8 @@ from app.schemas.planning import DayPlanResult, DayScheduleBuildResult, Schedule
 from app.schemas.tasks import TaskRecord
 from app.utils.confidence import build_confidence
 from app.utils.datetime import add_minutes, combine_day_and_hour
+
+logger = logging.getLogger(__name__)
 
 
 class PlanningService:
@@ -110,6 +113,25 @@ class PlanningService:
         work_start = self._resolve_bound(schedule_day, day_start, day_start_hour, self.settings.workday.start_hour)
         work_end = self._resolve_bound(schedule_day, day_end, day_end_hour, self.settings.workday.end_hour)
         buffer_value = buffer_minutes if buffer_minutes is not None else self.settings.workday.buffer_minutes
+        logger.info(
+            "Building day schedule.",
+            extra={
+                "event": "service.planning.build_day_schedule.start",
+                "context": {
+                    "target_date": target_date,
+                    "work_start": work_start.isoformat(),
+                    "work_end": work_end.isoformat(),
+                    "buffer_minutes": buffer_value,
+                    "preserve_existing_scheduled": preserve_existing_scheduled,
+                    "include_due_tomorrow": include_due_tomorrow,
+                    "max_candidates": max_candidates,
+                    "preview_only": preview_only,
+                    "input_task_count": len(tasks),
+                    "input_checklist_count": len(checklist_items),
+                    "input_event_count": len(events),
+                },
+            },
+        )
 
         busy_blocks: list[TimeBlock] = []
         intervals: list[tuple[datetime, datetime]] = []
@@ -140,6 +162,17 @@ class PlanningService:
                         score=existing.get("score"),
                     )
                 )
+        logger.info(
+            "Prepared busy and existing scheduled intervals.",
+            extra={
+                "event": "service.planning.build_day_schedule.intervals",
+                "context": {
+                    "busy_blocks": len(busy_blocks),
+                    "existing_scheduled_items": len([i for i in scheduled_items if i.source == "existing"]),
+                    "interval_count": len(intervals),
+                },
+            },
+        )
 
         candidates = self._select_candidates(
             target_date=target_date,
@@ -150,6 +183,17 @@ class PlanningService:
             max_candidates=max_candidates,
         )
         free_slots = self._compute_free_slots(work_start, work_end, intervals)
+        logger.info(
+            "Computed scheduling candidates and free slots.",
+            extra={
+                "event": "service.planning.build_day_schedule.candidates",
+                "context": {
+                    "candidate_count": len(candidates),
+                    "free_slot_count": len(free_slots),
+                    "free_slots": [{"start": slot[0].isoformat(), "end": slot[1].isoformat()} for slot in free_slots],
+                },
+            },
+        )
         unscheduled_items: list[dict] = []
 
         for candidate in candidates:
@@ -183,6 +227,20 @@ class PlanningService:
         ]
         if not preserve_existing_scheduled:
             rationale[2] = "Start-from-scratch mode rebuilt today's schedule and reassigned time blocks."
+
+        logger.info(
+            "Completed day schedule build.",
+            extra={
+                "event": "service.planning.build_day_schedule.complete",
+                "context": {
+                    "target_date": target_date,
+                    "new_scheduled_items": len([item for item in scheduled_items if item.source == "new"]),
+                    "existing_scheduled_items": len([item for item in scheduled_items if item.source == "existing"]),
+                    "unscheduled_count": len(unscheduled_items),
+                    "cleared_existing_count": cleared_existing_count,
+                },
+            },
+        )
 
         return DayScheduleBuildResult(
             target_date=target_date,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
@@ -31,6 +32,8 @@ from app.workflows.plan_day.graph import PlanDayWorkflow
 from app.workflows.process_emails.graph import ProcessEmailsWorkflow
 from app.workflows.process_notes_inbox.graph import ProcessNotesInboxWorkflow
 from app.workflows.process_task_inbox.graph import ProcessTaskInboxWorkflow
+
+logger = logging.getLogger(__name__)
 
 configure_logging()
 settings = get_settings()
@@ -314,6 +317,13 @@ async def process_notes_inbox(payload: ProcessNotesInboxRequest) -> dict:
 
 
 def _build_day_schedule(payload: DayScheduleBuildInput):
+    logger.info(
+        "Received build-day-schedule request.",
+        extra={
+            "event": "api.planning.build_day_schedule.request",
+            "context": payload.model_dump(),
+        },
+    )
     if not payload.preserve_existing_scheduled:
         cleared_tasks = task_service.clear_schedule_for_day(payload.target_date)
         cleared_checklist = checklist_service.clear_schedule_for_day(payload.target_date)
@@ -339,6 +349,7 @@ def _build_day_schedule(payload: DayScheduleBuildInput):
     )
 
     if not payload.preview_only:
+        committed_count = 0
         for item in result.scheduled_items:
             if item.source != "new":
                 continue
@@ -347,6 +358,29 @@ def _build_day_schedule(payload: DayScheduleBuildInput):
                 task_service.set_schedule(item.item_id, scheduled_range, estimated_minutes=item.estimated_minutes)
             else:
                 checklist_service.set_schedule(item.item_id, scheduled_range, estimated_minutes=item.estimated_minutes)
+            committed_count += 1
+        logger.info(
+            "Committed scheduled items to Notion.",
+            extra={
+                "event": "api.planning.build_day_schedule.commit",
+                "context": {
+                    "target_date": payload.target_date,
+                    "committed_count": committed_count,
+                },
+            },
+        )
+    else:
+        logger.info(
+            "Build-day-schedule completed in preview mode.",
+            extra={
+                "event": "api.planning.build_day_schedule.preview",
+                "context": {
+                    "target_date": payload.target_date,
+                    "scheduled_count": len(result.scheduled_items),
+                    "unscheduled_count": len(result.unscheduled_items),
+                },
+            },
+        )
     return result
 
 

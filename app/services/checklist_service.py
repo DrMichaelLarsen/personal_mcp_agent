@@ -47,6 +47,16 @@ class ChecklistService:
         props = raw.get("properties", {})
         cfg = self.settings.checklist_items_db
 
+        def _as_date_start(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict):
+                start = value.get("start")
+                return start if isinstance(start, str) else None
+            return None
+
         def _as_minutes(value):
             if value is None:
                 return None
@@ -66,16 +76,12 @@ class ChecklistService:
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
             done=bool(props.get(cfg.done_property)) if cfg.done_property else False,
-            scheduled=(
-                (props.get(cfg.scheduled_property) or {}).get("start")
-                if cfg.scheduled_property and isinstance(props.get(cfg.scheduled_property), dict)
-                else (props.get(cfg.scheduled_property) if cfg.scheduled_property else None)
-            ),
-            deadline=props.get(cfg.deadline_property) if cfg.deadline_property else None,
+            scheduled=_as_date_start(props.get(cfg.scheduled_property)) if cfg.scheduled_property else None,
+            deadline=_as_date_start(props.get(cfg.deadline_property)) if cfg.deadline_property else None,
             estimated_minutes=_as_minutes(props.get(cfg.estimate_property)) if cfg.estimate_property else None,
             score=props.get(cfg.score_property) if cfg.score_property else None,
-            preferred_start=props.get(cfg.preferred_start_property) if cfg.preferred_start_property else None,
-            preferred_end=props.get(cfg.preferred_end_property) if cfg.preferred_end_property else None,
+            preferred_start=_as_date_start(props.get(cfg.preferred_start_property)) if cfg.preferred_start_property else None,
+            preferred_end=_as_date_start(props.get(cfg.preferred_end_property)) if cfg.preferred_end_property else None,
             preferred_time_mode=props.get(cfg.preferred_time_mode_property) if cfg.preferred_time_mode_property else None,
             schedule_filter=bool(props.get(cfg.schedule_filter_property)) if cfg.schedule_filter_property else None,
             raw=raw,

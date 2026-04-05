@@ -311,6 +311,16 @@ class TaskService:
                 return None
             return str(value)
 
+        def _as_date_start(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict):
+                start = value.get("start")
+                return start if isinstance(start, str) else None
+            return None
+
         def _as_minutes(value):
             if value is None:
                 return None
@@ -361,12 +371,8 @@ class TaskService:
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
-            scheduled=(
-                (props.get(cfg.scheduled_property) or {}).get("start")
-                if cfg.scheduled_property and isinstance(props.get(cfg.scheduled_property), dict)
-                else (props.get(cfg.scheduled_property) if cfg.scheduled_property else None)
-            ),
-            deadline=props.get(cfg.deadline_property) if cfg.deadline_property else None,
+            scheduled=_as_date_start(props.get(cfg.scheduled_property)) if cfg.scheduled_property else None,
+            deadline=_as_date_start(props.get(cfg.deadline_property)) if cfg.deadline_property else None,
             estimated_minutes=_as_minutes(props.get(cfg.estimate_property)) if cfg.estimate_property else None,
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,
             project_id=_as_single_id(props.get(cfg.relation_property)) if cfg.relation_property else None,

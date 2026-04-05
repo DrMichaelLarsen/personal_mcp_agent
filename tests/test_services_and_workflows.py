@@ -140,6 +140,22 @@ def test_task_record_mapping_coerces_empty_people_relation_phone_shapes():
     assert mapped.depends_on_ids == []
 
 
+def test_task_record_mapping_coerces_dict_date_fields_to_start_string():
+    settings, _, projects, matching, tasks, *_ = build_context()
+    raw = {
+        "id": "task-raw-date-1",
+        "title": "Fallback title",
+        "properties": {
+            settings.tasks_db.title_property: "Mapped title",
+            settings.tasks_db.scheduled_property: {"start": "2026-03-25T09:00:00", "end": "2026-03-25T09:45:00"},
+            settings.tasks_db.deadline_property: {"start": "2026-03-25T12:00:00", "end": "2026-03-25T12:30:00"},
+        },
+    }
+    mapped = tasks._to_record(raw)
+    assert mapped.scheduled == "2026-03-25T09:00:00"
+    assert mapped.deadline == "2026-03-25T12:00:00"
+
+
 def test_project_matching_ambiguous():
     _, _, projects, matching, *_ = build_context()
     projects.create_project(ProjectCreateInput(title="Alpha Website", area_id="area-1"))
@@ -271,6 +287,27 @@ def test_checklist_service_can_map_and_clear_schedule():
     assert item.scheduled == "2026-03-25T08:00:00"
     assert checklist.clear_schedule_for_day("2026-03-25") == 1
     assert checklist.get_item(raw["id"]).scheduled is None
+
+
+def test_checklist_record_mapping_coerces_dict_date_fields_to_start_string():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    raw = {
+        "id": "checklist-raw-date-1",
+        "title": "Fallback title",
+        "properties": {
+            settings.checklist_items_db.title_property: "Checklist title",
+            settings.checklist_items_db.scheduled_property: {"start": "2026-03-25T10:00:00", "end": "2026-03-25T10:20:00"},
+            settings.checklist_items_db.deadline_property: {"start": "2026-03-25T16:00:00", "end": "2026-03-25T16:30:00"},
+            settings.checklist_items_db.preferred_start_property: {"start": "2026-03-25T11:00:00", "end": "2026-03-25T11:15:00"},
+            settings.checklist_items_db.preferred_end_property: {"start": "2026-03-25T13:00:00", "end": "2026-03-25T13:15:00"},
+        },
+    }
+    mapped = checklist._to_record(raw)
+    assert mapped.scheduled == "2026-03-25T10:00:00"
+    assert mapped.deadline == "2026-03-25T16:00:00"
+    assert mapped.preferred_start == "2026-03-25T11:00:00"
+    assert mapped.preferred_end == "2026-03-25T13:00:00"
 
 
 def test_event_service_ignores_all_day_events_for_day_schedule():
