@@ -38,6 +38,37 @@ logger = logging.getLogger(__name__)
 configure_logging()
 settings = get_settings()
 
+
+def _validate_runtime_config() -> None:
+    db_ids = {
+        "tasks": settings.tasks_db.database_id,
+        "checklist_items": settings.checklist_items_db.database_id,
+        "events": settings.events_db.database_id,
+        "projects": settings.projects_db.database_id,
+        "notes": settings.notes_db.database_id,
+    }
+    invalid = {name: value for name, value in db_ids.items() if not value or value.startswith("your_")}
+    if invalid:
+        raise RuntimeError(
+            "Invalid Notion database configuration detected. "
+            f"Update placeholder/empty IDs: {invalid}"
+        )
+
+    logger.info(
+        "Loaded runtime database configuration.",
+        extra={
+            "event": "app.config.database_ids",
+            "context": {
+                "events_db_id": settings.events_db.database_id,
+                "events_start_property": settings.events_db.start_property,
+                "events_end_property": settings.events_db.end_property,
+            },
+        },
+    )
+
+
+_validate_runtime_config()
+
 notion_client = NotionClient(settings.notion_api_key)
 gmail_client = GmailClient(
     credentials_path=settings.gmail.credentials_path,

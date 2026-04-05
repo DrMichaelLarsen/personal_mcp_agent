@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.config import DomainRoutingRule, get_settings
 from app.adapters.llm_client import create_llm_client
 from app.services.cost_service import CostService
@@ -507,6 +509,30 @@ def test_build_day_schedule_start_from_scratch_can_replace_existing_schedule():
     reset_item = next(item for item in result.scheduled_items if item.title == "Reset me")
     assert reset_item.source == "new"
     assert reset_item.start == "2026-03-25T09:00:00"
+
+
+def test_build_day_schedule_for_today_does_not_schedule_in_the_past():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    task = tasks.create_task(TaskCreateInput(title="Today task", project_id=project.id, deadline="2026-03-25", estimated_minutes=30))
+    assert task.task is not None
+
+    planning._now = lambda: datetime.fromisoformat("2026-03-25T13:20:00")
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T17:00:00",
+        preview_only=True,
+    )
+
+    new_items = [item for item in result.scheduled_items if item.source == "new"]
+    assert new_items
+    assert all(item.start >= "2026-03-25T13:20:00" for item in new_items)
 
 
 def test_calendar_service_falls_back_to_preview_when_adapter_not_implemented():

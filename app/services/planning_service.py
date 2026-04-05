@@ -110,8 +110,12 @@ class PlanningService:
         cleared_existing_count: int = 0,
     ) -> DayScheduleBuildResult:
         schedule_day = date.fromisoformat(target_date)
+        now = self._now().replace(second=0, microsecond=0)
+        is_today = schedule_day == now.date()
         work_start = self._resolve_bound(schedule_day, day_start, day_start_hour, self.settings.workday.start_hour)
         work_end = self._resolve_bound(schedule_day, day_end, day_end_hour, self.settings.workday.end_hour)
+        if is_today and work_start < now:
+            work_start = now
         buffer_value = buffer_minutes if buffer_minutes is not None else self.settings.workday.buffer_minutes
         logger.info(
             "Building day schedule.",
@@ -119,6 +123,8 @@ class PlanningService:
                 "event": "service.planning.build_day_schedule.start",
                 "context": {
                     "target_date": target_date,
+                    "is_today": is_today,
+                    "now": now.isoformat(),
                     "work_start": work_start.isoformat(),
                     "work_end": work_end.isoformat(),
                     "buffer_minutes": buffer_value,
@@ -199,8 +205,12 @@ class PlanningService:
         for candidate in candidates:
             placement = self._place_candidate(candidate, free_slots)
             if placement is None and candidate["urgency_rank"] <= 1:
-                late_start = max(work_end, max((end for _, end in intervals), default=work_end))
-                placement = (late_start, late_start + timedelta(minutes=candidate["estimated_minutes"]))
+                if is_today and now >= work_end:
+                    placement = None
+                else:
+                    late_anchor = now if is_today else work_end
+                    late_start = max(work_end, max((end for _, end in intervals), default=work_end), late_anchor)
+                    placement = (late_start, late_start + timedelta(minutes=candidate["estimated_minutes"]))
             if placement is None:
                 unscheduled_items.append(candidate)
                 continue
@@ -257,6 +267,9 @@ class PlanningService:
         if iso_value:
             return self._parse_iso(iso_value)
         return combine_day_and_hour(day, hour_value if hour_value is not None else fallback_hour)
+
+    def _now(self) -> datetime:
+        return datetime.now()
 
     def _parse_iso(self, value: str) -> datetime:
         return datetime.fromisoformat(value)
