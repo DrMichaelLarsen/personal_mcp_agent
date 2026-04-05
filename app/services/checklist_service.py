@@ -47,5 +47,6 @@ class ChecklistService:
             preferred_start=props.get(cfg.preferred_start_property) if cfg.preferred_start_property else None,
             preferred_end=props.get(cfg.preferred_end_property) if cfg.preferred_end_property else None,
             preferred_time_mode=props.get(cfg.preferred_time_mode_property) if cfg.preferred_time_mode_property else None,
+            schedule_filter=bool(props.get(cfg.schedule_filter_property)) if cfg.schedule_filter_property else None,
             raw=raw,
         )

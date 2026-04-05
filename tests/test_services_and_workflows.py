@@ -273,6 +273,87 @@ def test_checklist_service_can_map_and_clear_schedule():
     assert checklist.get_item(raw["id"]).scheduled is None
 
 
+def test_event_service_ignores_all_day_events_for_day_schedule():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    event_service = EventService(notion, settings)
+    notion.create_page(
+        settings.events_db.database_id,
+        {
+            settings.events_db.title_property: "All day conference",
+            settings.events_db.done_property: False,
+            settings.events_db.start_property: "2026-03-25",
+            settings.events_db.end_property: "2026-03-25",
+        },
+    )
+    notion.create_page(
+        settings.events_db.database_id,
+        {
+            settings.events_db.title_property: "Timed meeting",
+            settings.events_db.done_property: False,
+            settings.events_db.start_property: "2026-03-25T10:00:00",
+            settings.events_db.end_property: "2026-03-25T10:30:00",
+        },
+    )
+
+    events = event_service.list_events_for_day("2026-03-25")
+    assert [event.title for event in events] == ["Timed meeting"]
+
+
+def test_build_day_schedule_respects_schedule_formula_filter_for_tasks_and_checklist_items():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    settings.tasks_db.schedule_filter_property = "Schedule"
+    settings.checklist_items_db.schedule_filter_property = "Schedule"
+    checklist = ChecklistService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+
+    task_allowed = tasks.create_task(TaskCreateInput(title="Task allowed", project_id=project.id, deadline="2026-03-25", estimated_minutes=30))
+    task_blocked = tasks.create_task(TaskCreateInput(title="Task blocked", project_id=project.id, deadline="2026-03-25", estimated_minutes=30))
+    assert task_allowed.task is not None and task_blocked.task is not None
+    notion.pages[task_allowed.task.id]["properties"]["Schedule"] = True
+    notion.pages[task_blocked.task.id]["properties"]["Schedule"] = False
+
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Checklist allowed",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.deadline_property: "2026-03-25",
+            settings.checklist_items_db.estimate_property: 20,
+            settings.checklist_items_db.score_property: 5,
+            "Schedule": True,
+        },
+    )
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Checklist blocked",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.deadline_property: "2026-03-25",
+            settings.checklist_items_db.estimate_property: 20,
+            settings.checklist_items_db.score_property: 5,
+            "Schedule": False,
+        },
+    )
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=checklist.list_open_items(),
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T17:00:00",
+        preview_only=True,
+    )
+
+    scheduled_titles = {item.title for item in result.scheduled_items}
+    assert "Task allowed" in scheduled_titles
+    assert "Checklist allowed" in scheduled_titles
+    assert "Task blocked" not in scheduled_titles
+    assert "Checklist blocked" not in scheduled_titles
+
+
 def test_build_day_schedule_places_due_items_around_events_and_existing_schedule():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     checklist = ChecklistService(notion, settings)

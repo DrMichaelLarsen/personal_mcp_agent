@@ -354,6 +354,7 @@ class TaskService:
             dependency_of_ids=_as_list(props.get(cfg.dependency_of_property)) if cfg.dependency_of_property else [],
             depends_on_ids=_as_list(props.get(cfg.depends_on_property)) if cfg.depends_on_property else [],
             score=props.get(cfg.score_property) if cfg.score_property else None,
+            schedule_filter=bool(props.get(cfg.schedule_filter_property)) if cfg.schedule_filter_property else None,
             ai_cost=props.get(cfg.ai_cost_property) if cfg.ai_cost_property else None,
             raw=raw,
         )

@@ -17,4 +17,5 @@ class ChecklistItemRecord(BaseModel):
     preferred_start: str | None = None
     preferred_end: str | None = None
     preferred_time_mode: str | None = None
+    schedule_filter: bool | None = None
     raw: dict[str, Any] = Field(default_factory=dict)

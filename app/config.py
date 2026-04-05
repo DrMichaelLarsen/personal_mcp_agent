@@ -54,6 +54,7 @@ class NotionDatabaseConfig(BaseModel):
     description_property: str | None = None
     source_id_property: str | None = "Source ID"
     ai_cost_property: str | None = "ai_cost"
+    schedule_filter_property: str | None = None
     store_content_in_property: bool = True
     allowed_statuses: list[str] = Field(
         default_factory=lambda: ["To Do", "Not started", "In Progress", "Completed", "Done"]

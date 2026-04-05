@@ -16,8 +16,15 @@ class EventService:
         return [
             item
             for item in items
-            if not item.done and item.start.startswith(day)
+            if not item.done and item.start.startswith(day) and not self._is_all_day_event(item)
         ]
+
+    def _is_all_day_event(self, event: EventRecord) -> bool:
+        # Date-only values (no time component) are treated as all-day and should
+        # not block scheduling windows for focused work.
+        start = event.start or ""
+        end = event.end or ""
+        return "T" not in start or "T" not in end
 
     def _to_record(self, raw: dict) -> EventRecord:
         props = raw.get("properties", {})

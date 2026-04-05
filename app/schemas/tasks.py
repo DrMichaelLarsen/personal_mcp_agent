@@ -75,6 +75,7 @@ class TaskRecord(BaseModel):
     dependency_of_ids: list[str] = Field(default_factory=list)
     depends_on_ids: list[str] = Field(default_factory=list)
     score: float | None = None
+    schedule_filter: bool | None = None
     ai_cost: float | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 

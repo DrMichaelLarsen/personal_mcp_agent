@@ -245,6 +245,8 @@ class PlanningService:
     ) -> list[dict]:
         tomorrow = (date.fromisoformat(target_date) + timedelta(days=1)).isoformat()
         selected: list[dict] = []
+        require_task_schedule_filter = bool((self.settings.tasks_db.schedule_filter_property or "").strip())
+        require_checklist_schedule_filter = bool((self.settings.checklist_items_db.schedule_filter_property or "").strip())
 
         def _add(item_type: str, item_id: str, title: str, scheduled: str | None, deadline: str | None, estimated_minutes: int | None, score: float | None, preferred_start: str | None = None, preferred_end: str | None = None, preferred_time_mode: str | None = None):
             if preserve_existing_scheduled and (scheduled or "").startswith(target_date):
@@ -273,8 +275,12 @@ class PlanningService:
             )
 
         for task in tasks:
+            if require_task_schedule_filter and task.schedule_filter is not True:
+                continue
             _add("task", task.id, task.title, task.scheduled, task.deadline, task.estimated_minutes, task.score)
         for item in checklist_items:
+            if require_checklist_schedule_filter and item.schedule_filter is not True:
+                continue
             _add(
                 "checklist_item",
                 item.id,
