@@ -15,7 +15,7 @@ class ChecklistService:
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id)]
         return [item for item in items if not item.done and (item.status or "").strip().lower() != "complete"]
 
-    def set_schedule(self, item_id: str, scheduled: str | None) -> ChecklistItemRecord:
+    def set_schedule(self, item_id: str, scheduled: str | dict | None) -> ChecklistItemRecord:
         cfg = self.settings.checklist_items_db
         if cfg.scheduled_property:
             self.notion.set_page_property(item_id, cfg.scheduled_property, scheduled)
@@ -40,7 +40,11 @@ class ChecklistService:
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
             done=bool(props.get(cfg.done_property)) if cfg.done_property else False,
-            scheduled=props.get(cfg.scheduled_property) if cfg.scheduled_property else None,
+            scheduled=(
+                (props.get(cfg.scheduled_property) or {}).get("start")
+                if cfg.scheduled_property and isinstance(props.get(cfg.scheduled_property), dict)
+                else (props.get(cfg.scheduled_property) if cfg.scheduled_property else None)
+            ),
             deadline=props.get(cfg.deadline_property) if cfg.deadline_property else None,
             estimated_minutes=props.get(cfg.estimate_property) if cfg.estimate_property else None,
             score=props.get(cfg.score_property) if cfg.score_property else None,

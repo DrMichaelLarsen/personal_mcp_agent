@@ -304,7 +304,12 @@ class NotionClient:
             return [item.get("id") for item in value.get("people", []) if item.get("id")]
         if ptype == "date":
             date_value = value.get("date")
-            return (date_value or {}).get("start")
+            date_obj = date_value or {}
+            start = date_obj.get("start")
+            end = date_obj.get("end")
+            if start and end:
+                return {"start": start, "end": end}
+            return start
         if ptype == "number":
             return value.get("number")
         if ptype == "checkbox":

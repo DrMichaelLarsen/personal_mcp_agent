@@ -120,7 +120,7 @@ class TaskService:
     def get_task(self, task_id: str) -> TaskRecord:
         return self._to_record(self.notion.get_page(task_id))
 
-    def set_schedule(self, task_id: str, scheduled: str | None) -> TaskRecord:
+    def set_schedule(self, task_id: str, scheduled: str | dict | None) -> TaskRecord:
         cfg = self.settings.tasks_db
         if cfg.scheduled_property:
             self.notion.set_page_property(task_id, cfg.scheduled_property, scheduled)
@@ -336,7 +336,11 @@ class TaskService:
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
-            scheduled=props.get(cfg.scheduled_property) if cfg.scheduled_property else None,
+            scheduled=(
+                (props.get(cfg.scheduled_property) or {}).get("start")
+                if cfg.scheduled_property and isinstance(props.get(cfg.scheduled_property), dict)
+                else (props.get(cfg.scheduled_property) if cfg.scheduled_property else None)
+            ),
             deadline=props.get(cfg.deadline_property) if cfg.deadline_property else None,
             estimated_minutes=props.get(cfg.estimate_property) if cfg.estimate_property else None,
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,

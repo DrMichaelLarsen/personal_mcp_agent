@@ -299,6 +299,54 @@ def test_event_service_ignores_all_day_events_for_day_schedule():
     assert [event.title for event in events] == ["Timed meeting"]
 
 
+def test_event_service_supports_single_date_property_with_start_and_end_range():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    settings.events_db.start_property = "Date"
+    settings.events_db.end_property = "Date"
+    event_service = EventService(notion, settings)
+
+    notion.create_page(
+        settings.events_db.database_id,
+        {
+            settings.events_db.title_property: "Procedure block",
+            settings.events_db.done_property: False,
+            "Date": {"start": "2026-03-25T13:00:00", "end": "2026-03-25T14:15:00"},
+        },
+    )
+
+    events = event_service.list_events_for_day("2026-03-25")
+    assert len(events) == 1
+    assert events[0].start == "2026-03-25T13:00:00"
+    assert events[0].end == "2026-03-25T14:15:00"
+
+
+def test_set_schedule_writes_start_and_end_range_to_scheduled_property():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+
+    task = tasks.create_task(TaskCreateInput(title="Range schedule task", project_id=project.id, estimated_minutes=45))
+    assert task.task is not None
+    checklist_raw = notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Range schedule checklist",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.estimate_property: 20,
+        },
+    )
+
+    scheduled_range = {"start": "2026-03-25T09:00:00", "end": "2026-03-25T09:45:00"}
+    tasks.set_schedule(task.task.id, scheduled_range)
+    checklist.set_schedule(checklist_raw["id"], scheduled_range)
+
+    task_raw = notion.get_page(task.task.id)
+    checklist_page_raw = notion.get_page(checklist_raw["id"])
+    assert task_raw["properties"][settings.tasks_db.scheduled_property] == scheduled_range
+    assert checklist_page_raw["properties"][settings.checklist_items_db.scheduled_property] == scheduled_range
+
+
 def test_build_day_schedule_respects_schedule_formula_filter_for_tasks_and_checklist_items():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     settings.tasks_db.schedule_filter_property = "Schedule"
