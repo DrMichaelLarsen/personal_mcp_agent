@@ -120,10 +120,21 @@ class TaskService:
     def get_task(self, task_id: str) -> TaskRecord:
         return self._to_record(self.notion.get_page(task_id))
 
-    def set_schedule(self, task_id: str, scheduled: str | dict | None) -> TaskRecord:
+    def set_schedule(self, task_id: str, scheduled: str | dict | None, estimated_minutes: int | float | None = None) -> TaskRecord:
         cfg = self.settings.tasks_db
+        properties: dict[str, object] = {}
         if cfg.scheduled_property:
+            properties[cfg.scheduled_property] = scheduled
+        if estimated_minutes is not None and cfg.estimate_property:
+            properties[cfg.estimate_property] = max(1, int(round(estimated_minutes)))
+
+        if not properties:
+            return self.get_task(task_id)
+
+        if cfg.scheduled_property and len(properties) == 1:
             self.notion.set_page_property(task_id, cfg.scheduled_property, scheduled)
+        else:
+            self.notion.update_page(task_id, properties)
         return self.get_task(task_id)
 
     def list_tasks_for_today(self, day: str) -> list[TaskRecord]:
@@ -300,6 +311,20 @@ class TaskService:
                 return None
             return str(value)
 
+        def _as_minutes(value):
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(round(value))
+            if isinstance(value, str):
+                try:
+                    return int(round(float(value.strip())))
+                except ValueError:
+                    return None
+            return None
+
         def _notes_from_children() -> str | None:
             children = raw.get("children") or []
             if not isinstance(children, list):
@@ -342,7 +367,7 @@ class TaskService:
                 else (props.get(cfg.scheduled_property) if cfg.scheduled_property else None)
             ),
             deadline=props.get(cfg.deadline_property) if cfg.deadline_property else None,
-            estimated_minutes=props.get(cfg.estimate_property) if cfg.estimate_property else None,
+            estimated_minutes=_as_minutes(props.get(cfg.estimate_property)) if cfg.estimate_property else None,
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,
             project_id=_as_single_id(props.get(cfg.relation_property)) if cfg.relation_property else None,
             project_title=props.get("Project Title"),

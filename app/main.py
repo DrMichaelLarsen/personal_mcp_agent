@@ -344,9 +344,9 @@ def _build_day_schedule(payload: DayScheduleBuildInput):
                 continue
             scheduled_range = {"start": item.start, "end": item.end}
             if item.item_type == "task":
-                task_service.set_schedule(item.item_id, scheduled_range)
+                task_service.set_schedule(item.item_id, scheduled_range, estimated_minutes=item.estimated_minutes)
             else:
-                checklist_service.set_schedule(item.item_id, scheduled_range)
+                checklist_service.set_schedule(item.item_id, scheduled_range, estimated_minutes=item.estimated_minutes)
     return result
 
 
@@ -381,7 +381,14 @@ async def schedule_task_at_time(payload: ScheduleTaskAtTimeRequest) -> dict:
                 task = create_result.task
                 task_title = task.title
         elif not payload.preview_only:
-            task = task_service.set_schedule(task.id, {"start": payload.start, "end": (datetime.fromisoformat(payload.start) + timedelta(minutes=payload.duration_minutes)).isoformat()})
+            task = task_service.set_schedule(
+                task.id,
+                {
+                    "start": payload.start,
+                    "end": (datetime.fromisoformat(payload.start) + timedelta(minutes=payload.duration_minutes)).isoformat(),
+                },
+                estimated_minutes=payload.duration_minutes,
+            )
             task_title = task.title
         else:
             task_title = task.title

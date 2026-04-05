@@ -47,9 +47,9 @@ def register(server, container) -> None:
                     continue
                 scheduled_range = {"start": item.start, "end": item.end}
                 if item.item_type == "task":
-                    container.task_service.set_schedule(item.item_id, scheduled_range)
+                    container.task_service.set_schedule(item.item_id, scheduled_range, estimated_minutes=item.estimated_minutes)
                 else:
-                    container.checklist_service.set_schedule(item.item_id, scheduled_range)
+                    container.checklist_service.set_schedule(item.item_id, scheduled_range, estimated_minutes=item.estimated_minutes)
         return result.model_dump()
 
     @server.tool(name="schedule_task_at_time", description="Schedule an existing task, or create one, at a specific time today.")
@@ -79,6 +79,7 @@ def register(server, container) -> None:
                     "start": payload.start,
                     "end": (datetime.fromisoformat(payload.start) + timedelta(minutes=payload.duration_minutes)).isoformat(),
                 },
+                estimated_minutes=payload.duration_minutes,
             )
             task_title = task.title
         else:
