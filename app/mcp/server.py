@@ -16,8 +16,10 @@ class ServiceContainer:
     project_service: object
     matching_service: object
     task_service: object
+    checklist_service: object
     note_service: object
     calendar_service: object
+    event_service: object
     email_service: object
     planning_service: object
     process_emails_workflow: object

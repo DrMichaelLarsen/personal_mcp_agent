@@ -22,10 +22,13 @@ class NotionDatabaseConfig(BaseModel):
     database_id: str = ""
     title_property: str = "Name"
     status_property: str | None = "Status"
+    done_property: str | None = "Done"
     priority_property: str | None = "Priority"
     importance_property: str | None = "Importance"
     scheduled_property: str | None = "Scheduled"
     deadline_property: str | None = "Deadline"
+    start_property: str | None = "Start"
+    end_property: str | None = "End"
     estimate_property: str | None = "Time Required"
     relation_property: str | None = "Project"
     contexts_property: str | None = "Contexts"
@@ -43,6 +46,9 @@ class NotionDatabaseConfig(BaseModel):
     budget_property: str | None = "Budget"
     priority_checkbox_property: str | None = "Priority"
     tags_property: str | None = "Tags"
+    preferred_start_property: str | None = "Preferred Start"
+    preferred_end_property: str | None = "Preferred End"
+    preferred_time_mode_property: str | None = "Preferred Time Mode"
     url_property: str | None = "URL"
     notes_property: str | None = "Description"
     description_property: str | None = None
@@ -175,10 +181,38 @@ class Settings(BaseSettings):
     notes_db: NotionDatabaseConfig = Field(
         default_factory=lambda: NotionDatabaseConfig(
             status_property=None,
+            done_property=None,
             importance_property=None,
             scheduled_property=None,
             deadline_property=None,
+            start_property=None,
+            end_property=None,
             store_content_in_property=False,
+        )
+    )
+    checklist_items_db: NotionDatabaseConfig = Field(
+        default_factory=lambda: NotionDatabaseConfig(
+            relation_property=None,
+            contexts_property=None,
+            assigned_property=None,
+            score_property="Score",
+        )
+    )
+    events_db: NotionDatabaseConfig = Field(
+        default_factory=lambda: NotionDatabaseConfig(
+            status_property=None,
+            scheduled_property=None,
+            deadline_property=None,
+            estimate_property=None,
+            importance_property=None,
+            relation_property=None,
+            contexts_property=None,
+            assigned_property=None,
+            score_property=None,
+            done_property="Done",
+            start_property="Start",
+            end_property="End",
+            notes_property="Description",
         )
     )
     project_completed_statuses: list[str] = Field(default_factory=lambda: ["done", "complete", "completed", "archived", "canceled", "cancelled"])

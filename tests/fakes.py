@@ -93,6 +93,10 @@ class FakeNotionClient:
     def get_page(self, page_id: str):
         return self.pages[page_id]
 
+    def set_page_property(self, page_id: str, property_name: str, value):
+        self.pages[page_id]["properties"][property_name] = value
+        return self.pages[page_id]
+
     def append_markdown(self, page_id: str, markdown: str) -> None:
         blocks = self.markdown_to_blocks(markdown)
         self.pages[page_id].setdefault("children", [])

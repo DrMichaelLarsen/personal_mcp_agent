@@ -2,6 +2,13 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+
+# Codex / Oh My Codex local files
+.omx/
+.codex/
+.agents/
+
+# Claude local worktrees
 .claude/worktrees/
 .claude/worktrees/silly-blackwell
 .claude/worktrees/youthful-bhaskara

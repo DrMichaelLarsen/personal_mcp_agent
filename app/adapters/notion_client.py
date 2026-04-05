@@ -419,6 +419,25 @@ class NotionClient:
         raw = self._request("PATCH", f"/pages/{page_id}", payload)
         return self._normalize_page(raw)
 
+    def set_page_property(self, page_id: str, property_name: str, value: Any) -> dict[str, Any]:
+        db_id = self._get_parent_database_id(page_id)
+        property_types = self._get_database_property_types(db_id) if db_id else {}
+        property_schemas = self._get_database_schema(db_id) if db_id else {}
+        expected_type = property_types.get(property_name)
+        if expected_type == "date" and value is None:
+            encoded = {"date": None}
+        else:
+            encoded = self._encode_property(
+                property_name,
+                value,
+                expected_type=expected_type,
+                property_schema=property_schemas.get(property_name),
+            )
+        if encoded is None:
+            raise RuntimeError(f"Unable to encode Notion property '{property_name}' for update.")
+        raw = self._request("PATCH", f"/pages/{page_id}", {"properties": {property_name: encoded}})
+        return self._normalize_page(raw)
+
     def get_page(self, page_id: str) -> dict[str, Any]:
         raw = self._request("GET", f"/pages/{page_id}")
         return self._normalize_page(raw)

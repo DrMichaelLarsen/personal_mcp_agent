@@ -13,7 +13,9 @@ from app.schemas.tasks import TaskCreateInput
 from app.schemas.tasks import ProcessTaskInboxInput
 from app.schemas.tasks import TaskUpdateInput
 from app.services.calendar_service import CalendarService
+from app.services.checklist_service import ChecklistService
 from app.services.email_service import EmailAnalysisService, EmailService
+from app.services.event_service import EventService
 from app.services.matching_service import MatchingService
 from app.services.note_service import NoteService
 from app.services.planning_service import PlanningService
@@ -33,6 +35,8 @@ from tests.fakes import FakeCalendarClient, FakeDriveClient, FakeGmailClient, Fa
 def build_context():
     settings = get_settings(
         tasks_db={"database_id": "tasks-db"},
+        checklist_items_db={"database_id": "checklist-db"},
+        events_db={"database_id": "events-db"},
         projects_db={"database_id": "projects-db"},
         notes_db={"database_id": "notes-db"},
     )
@@ -40,8 +44,10 @@ def build_context():
     projects = ProjectService(notion, settings)
     matching = MatchingService(settings)
     tasks = TaskService(notion, projects, matching, settings)
+    checklist = ChecklistService(notion, settings)
     notes = NoteService(notion, projects, matching, settings)
     calendar = CalendarService(FakeCalendarClient([CalendarEvent(id="busy-1", title="Standup", start="2026-03-25T10:00:00", end="2026-03-25T10:30:00")]), settings)
+    event_service = EventService(notion, settings)
     email = EmailService(
         FakeGmailClient(
             [
@@ -245,6 +251,94 @@ def test_day_planning_output_structure():
     assert result.target_date == "2026-03-25"
     assert len(result.prioritized_tasks) == 2
     assert all(block.block_type == "focus" for block in result.suggested_blocks)
+
+
+def test_checklist_service_can_map_and_clear_schedule():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    raw = notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Morning review",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-25T08:00:00",
+            settings.checklist_items_db.estimate_property: 20,
+            settings.checklist_items_db.score_property: 10,
+        },
+    )
+    item = checklist.get_item(raw["id"])
+    assert item.title == "Morning review"
+    assert item.scheduled == "2026-03-25T08:00:00"
+    assert checklist.clear_schedule_for_day("2026-03-25") == 1
+    assert checklist.get_item(raw["id"]).scheduled is None
+
+
+def test_build_day_schedule_places_due_items_around_events_and_existing_schedule():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    event_service = EventService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+    due_today = tasks.create_task(TaskCreateInput(title="Due today", project_id=project.id, deadline="2026-03-25", estimated_minutes=60))
+    existing = tasks.create_task(TaskCreateInput(title="Already scheduled", project_id=project.id, scheduled="2026-03-25T08:00:00", estimated_minutes=60))
+    assert due_today.task is not None and existing.task is not None
+    notion.create_page(
+        settings.events_db.database_id,
+        {
+            settings.events_db.title_property: "Clinic",
+            settings.events_db.done_property: False,
+            settings.events_db.start_property: "2026-03-25T10:00:00",
+            settings.events_db.end_property: "2026-03-25T11:00:00",
+        },
+    )
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Short checklist",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.deadline_property: "2026-03-26",
+            settings.checklist_items_db.estimate_property: 30,
+            settings.checklist_items_db.score_property: 50,
+        },
+    )
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=checklist.list_open_items(),
+        events=event_service.list_events_for_day("2026-03-25"),
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T17:00:00",
+        buffer_minutes=10,
+        preview_only=True,
+    )
+    assert any(item.source == "existing" and item.title == "Already scheduled" for item in result.scheduled_items)
+    assert any(item.source == "new" and item.title == "Due today" for item in result.scheduled_items)
+    scheduled_due_today = next(item for item in result.scheduled_items if item.title == "Due today")
+    assert scheduled_due_today.start >= "2026-03-25T11:10:00"
+
+
+def test_build_day_schedule_start_from_scratch_can_replace_existing_schedule():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    scheduled = tasks.create_task(TaskCreateInput(title="Reset me", project_id=project.id, scheduled="2026-03-25T08:00:00", deadline="2026-03-26", estimated_minutes=60))
+    assert scheduled.task is not None
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=checklist.list_open_items(),
+        events=[],
+        preserve_existing_scheduled=False,
+        day_start="2026-03-25T09:00:00",
+        day_end="2026-03-25T17:00:00",
+        preview_only=True,
+    )
+    reset_item = next(item for item in result.scheduled_items if item.title == "Reset me")
+    assert reset_item.source == "new"
+    assert reset_item.start == "2026-03-25T09:00:00"
 
 
 def test_calendar_service_falls_back_to_preview_when_adapter_not_implemented():

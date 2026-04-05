@@ -120,6 +120,12 @@ class TaskService:
     def get_task(self, task_id: str) -> TaskRecord:
         return self._to_record(self.notion.get_page(task_id))
 
+    def set_schedule(self, task_id: str, scheduled: str | None) -> TaskRecord:
+        cfg = self.settings.tasks_db
+        if cfg.scheduled_property:
+            self.notion.set_page_property(task_id, cfg.scheduled_property, scheduled)
+        return self.get_task(task_id)
+
     def list_tasks_for_today(self, day: str) -> list[TaskRecord]:
         cfg = self.settings.tasks_db
         filters = {cfg.scheduled_property: day} if cfg.scheduled_property else None
@@ -139,6 +145,14 @@ class TaskService:
         filters = {cfg.relation_property: project_id} if project_id and cfg.relation_property else None
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id, filters)]
         return [item for item in items if item.status != "Complete"]
+
+    def clear_schedule_for_day(self, day: str) -> int:
+        cleared = 0
+        for task in self.list_open_tasks():
+            if (task.scheduled or "").startswith(day):
+                self.set_schedule(task.id, None)
+                cleared += 1
+        return cleared
 
     def list_inbox_candidates(
         self,
