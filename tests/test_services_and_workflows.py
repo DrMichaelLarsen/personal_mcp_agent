@@ -1210,6 +1210,20 @@ def test_project_description_can_be_resolved_from_related_notes_relation():
     assert "Residency scheduling" in record.description
 
 
+def test_project_record_mapping_coerces_dict_target_deadline_to_start_string():
+    settings, notion, projects, *_ = build_context()
+    raw = {
+        "id": "project-raw-date-1",
+        "title": "Fallback title",
+        "properties": {
+            settings.projects_db.title_property: "Mapped project",
+            settings.projects_db.target_deadline_property: {"start": "2026-03-25", "end": "2026-03-29"},
+        },
+    }
+    mapped = projects._to_record(raw)
+    assert mapped.target_deadline == "2026-03-25"
+
+
 def test_llm_factory_selects_gemini_provider():
     settings = get_settings()
     settings.llm.enabled = True

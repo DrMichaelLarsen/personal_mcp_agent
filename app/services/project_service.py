@@ -94,6 +94,9 @@ class ProjectService:
                 text_items = [item for item in value if isinstance(item, str)]
                 return " | ".join(text_items) if text_items else None
             if isinstance(value, dict):
+                if "start" in value:
+                    start = value.get("start")
+                    return start if isinstance(start, str) else None
                 for key in ("name", "title", "text", "plain_text"):
                     part = value.get(key)
                     if isinstance(part, str):
@@ -240,6 +243,9 @@ class ProjectService:
                 text_items = [item for item in value if isinstance(item, str)]
                 return " | ".join(text_items) if text_items else None
             if isinstance(value, dict):
+                if "start" in value:
+                    start = value.get("start")
+                    return start if isinstance(start, str) else None
                 for key in ("name", "title", "text", "plain_text"):
                     part = value.get(key)
                     if isinstance(part, str):
@@ -293,7 +299,7 @@ class ProjectService:
             description=description,
             area_id=_as_single_id(props.get(cfg.area_property)) if cfg.area_property else None,
             parent_project_id=_as_single_id(props.get(cfg.parent_project_property)) if cfg.parent_project_property else None,
-            target_deadline=props.get(cfg.target_deadline_property) if cfg.target_deadline_property else None,
+            target_deadline=_as_text(props.get(cfg.target_deadline_property)) if cfg.target_deadline_property else None,
             importance=props.get(cfg.importance_property) if cfg.importance_property else None,
             priority=props.get(cfg.priority_checkbox_property) if cfg.priority_checkbox_property else None,
             budget=props.get(cfg.budget_property) if cfg.budget_property else None,
