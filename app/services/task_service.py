@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.adapters.notion_client import NotionClient
 from app.config import Settings
@@ -122,9 +124,10 @@ class TaskService:
 
     def set_schedule(self, task_id: str, scheduled: str | dict | None, estimated_minutes: int | float | None = None) -> TaskRecord:
         cfg = self.settings.tasks_db
+        normalized_schedule = self._normalize_schedule_value(scheduled)
         properties: dict[str, object] = {}
         if cfg.scheduled_property:
-            properties[cfg.scheduled_property] = scheduled
+            properties[cfg.scheduled_property] = normalized_schedule
         if estimated_minutes is not None and cfg.estimate_property:
             properties[cfg.estimate_property] = max(1, int(round(estimated_minutes)))
 
@@ -132,10 +135,39 @@ class TaskService:
             return self.get_task(task_id)
 
         if cfg.scheduled_property and len(properties) == 1:
-            self.notion.set_page_property(task_id, cfg.scheduled_property, scheduled)
+            self.notion.set_page_property(task_id, cfg.scheduled_property, normalized_schedule)
         else:
             self.notion.update_page(task_id, properties)
         return self.get_task(task_id)
+
+    def _normalize_schedule_value(self, scheduled: str | dict | None) -> str | dict | None:
+        if scheduled is None:
+            return None
+        timezone_name = self.settings.calendar.timezone or "America/Denver"
+        tz = ZoneInfo(timezone_name)
+
+        def _normalize_iso(value: str) -> str:
+            if "T" not in value:
+                return value
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=tz)
+            else:
+                parsed = parsed.astimezone(tz)
+            return parsed.isoformat(timespec="seconds")
+
+        if isinstance(scheduled, str):
+            return _normalize_iso(scheduled)
+        if isinstance(scheduled, dict):
+            start = scheduled.get("start")
+            end = scheduled.get("end")
+            normalized: dict[str, str] = {}
+            if isinstance(start, str):
+                normalized["start"] = _normalize_iso(start)
+            if isinstance(end, str):
+                normalized["end"] = _normalize_iso(end)
+            return normalized if normalized else None
+        return scheduled
 
     def list_tasks_for_today(self, day: str) -> list[TaskRecord]:
         cfg = self.settings.tasks_db

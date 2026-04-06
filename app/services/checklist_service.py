@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from app.adapters.notion_client import NotionClient
 from app.config import Settings
 from app.schemas.checklist import ChecklistItemRecord
@@ -17,9 +20,10 @@ class ChecklistService:
 
     def set_schedule(self, item_id: str, scheduled: str | dict | None, estimated_minutes: int | float | None = None) -> ChecklistItemRecord:
         cfg = self.settings.checklist_items_db
+        normalized_schedule = self._normalize_schedule_value(scheduled)
         properties: dict[str, object] = {}
         if cfg.scheduled_property:
-            properties[cfg.scheduled_property] = scheduled
+            properties[cfg.scheduled_property] = normalized_schedule
         if estimated_minutes is not None and cfg.estimate_property:
             properties[cfg.estimate_property] = max(1, int(round(estimated_minutes)))
 
@@ -27,10 +31,39 @@ class ChecklistService:
             return self.get_item(item_id)
 
         if cfg.scheduled_property and len(properties) == 1:
-            self.notion.set_page_property(item_id, cfg.scheduled_property, scheduled)
+            self.notion.set_page_property(item_id, cfg.scheduled_property, normalized_schedule)
         else:
             self.notion.update_page(item_id, properties)
         return self.get_item(item_id)
+
+    def _normalize_schedule_value(self, scheduled: str | dict | None) -> str | dict | None:
+        if scheduled is None:
+            return None
+        timezone_name = self.settings.calendar.timezone or "America/Denver"
+        tz = ZoneInfo(timezone_name)
+
+        def _normalize_iso(value: str) -> str:
+            if "T" not in value:
+                return value
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=tz)
+            else:
+                parsed = parsed.astimezone(tz)
+            return parsed.isoformat(timespec="seconds")
+
+        if isinstance(scheduled, str):
+            return _normalize_iso(scheduled)
+        if isinstance(scheduled, dict):
+            start = scheduled.get("start")
+            end = scheduled.get("end")
+            normalized: dict[str, str] = {}
+            if isinstance(start, str):
+                normalized["start"] = _normalize_iso(start)
+            if isinstance(end, str):
+                normalized["end"] = _normalize_iso(end)
+            return normalized if normalized else None
+        return scheduled
 
     def clear_schedule_for_day(self, day: str, items: list[ChecklistItemRecord] | None = None) -> int:
         cleared = 0

@@ -396,6 +396,63 @@ def test_event_service_supports_single_date_property_with_start_and_end_range():
     assert events[0].end == "2026-03-25T14:15:00"
 
 
+def test_event_service_includes_timezone_shifted_event_overlapping_local_day():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    settings.calendar.timezone = "America/Denver"
+    settings.events_db.start_property = "Date"
+    settings.events_db.end_property = "Date"
+    event_service = EventService(notion, settings)
+
+    notion.create_page(
+        settings.events_db.database_id,
+        {
+            settings.events_db.title_property: "Late UTC overlap",
+            settings.events_db.done_property: False,
+            "Date": {"start": "2026-04-06T05:00:00+00:00", "end": "2026-04-06T07:00:00+00:00"},
+        },
+    )
+
+    events = event_service.list_events_for_day("2026-04-05")
+    assert any(event.title == "Late UTC overlap" for event in events)
+
+
+def test_build_day_schedule_does_not_overlap_timezone_aware_event():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    settings.calendar.timezone = "America/Denver"
+    settings.events_db.start_property = "Date"
+    settings.events_db.end_property = "Date"
+    event_service = EventService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+    task = tasks.create_task(TaskCreateInput(title="No overlap task", project_id=project.id, deadline="2026-04-06", estimated_minutes=30))
+    assert task.task is not None
+
+    notion.create_page(
+        settings.events_db.database_id,
+        {
+            settings.events_db.title_property: "Morning event",
+            settings.events_db.done_property: False,
+            "Date": {"start": "2026-04-06T14:00:00+00:00", "end": "2026-04-06T15:00:00+00:00"},
+        },
+    )
+
+    result = planning.build_day_schedule(
+        target_date="2026-04-06",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=event_service.list_events_for_day("2026-04-06"),
+        preserve_existing_scheduled=True,
+        day_start="2026-04-06T08:00:00",
+        day_end="2026-04-06T10:00:00",
+        buffer_minutes=10,
+        preview_only=True,
+    )
+
+    new_items = [item for item in result.scheduled_items if item.source == "new"]
+    assert new_items
+    assert all(item.start >= "2026-04-06T09:10:00" for item in new_items)
+
+
 def test_set_schedule_writes_start_and_end_range_to_scheduled_property():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     checklist = ChecklistService(notion, settings)
@@ -423,6 +480,35 @@ def test_set_schedule_writes_start_and_end_range_to_scheduled_property():
     assert checklist_page_raw["properties"][settings.checklist_items_db.scheduled_property] == scheduled_range
     assert task_raw["properties"][settings.tasks_db.estimate_property] == 45
     assert checklist_page_raw["properties"][settings.checklist_items_db.estimate_property] == 21
+
+
+def test_set_schedule_normalizes_naive_times_to_configured_local_timezone():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    settings.calendar.timezone = "America/Denver"
+    checklist = ChecklistService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+    task = tasks.create_task(TaskCreateInput(title="TZ task", project_id=project.id, estimated_minutes=30))
+    assert task.task is not None
+    checklist_raw = notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "TZ checklist",
+            settings.checklist_items_db.done_property: False,
+        },
+    )
+
+    tasks.set_schedule(task.task.id, {"start": "2026-04-06T08:00:00", "end": "2026-04-06T08:30:00"}, estimated_minutes=30)
+    checklist.set_schedule(checklist_raw["id"], {"start": "2026-04-06T08:00:00", "end": "2026-04-06T08:20:00"}, estimated_minutes=20)
+
+    task_raw = notion.get_page(task.task.id)
+    checklist_page_raw = notion.get_page(checklist_raw["id"])
+    task_sched = task_raw["properties"][settings.tasks_db.scheduled_property]
+    checklist_sched = checklist_page_raw["properties"][settings.checklist_items_db.scheduled_property]
+    assert isinstance(task_sched, dict)
+    assert isinstance(checklist_sched, dict)
+    assert task_sched["start"].endswith("-06:00")
+    assert checklist_sched["start"].endswith("-06:00")
 
 
 def test_build_day_schedule_respects_schedule_formula_filter_for_tasks_and_checklist_items():
