@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.schemas.checklist import ChecklistItemRecord
@@ -283,10 +284,16 @@ class PlanningService:
         return combine_day_and_hour(day, hour_value if hour_value is not None else fallback_hour)
 
     def _now(self) -> datetime:
-        return datetime.now()
+        timezone_name = self.settings.calendar.timezone or "America/Denver"
+        current = datetime.now(ZoneInfo(timezone_name))
+        return current.replace(tzinfo=None)
 
     def _parse_iso(self, value: str) -> datetime:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed
+        timezone_name = self.settings.calendar.timezone or "America/Denver"
+        return parsed.astimezone(ZoneInfo(timezone_name)).replace(tzinfo=None)
 
     def _existing_scheduled_items(self, tasks: list[TaskRecord], checklist_items: list[ChecklistItemRecord], target_date: str) -> list[dict]:
         existing: list[dict] = []
