@@ -333,7 +333,7 @@ class PlanningService:
         require_task_schedule_filter = bool((self.settings.tasks_db.schedule_filter_property or "").strip())
         require_checklist_schedule_filter = bool((self.settings.checklist_items_db.schedule_filter_property or "").strip())
 
-        def _add(item_type: str, item_id: str, title: str, scheduled: str | None, deadline: str | None, estimated_minutes: int | None, score: float | None, preferred_start: str | None = None, preferred_end: str | None = None, preferred_time_mode: str | None = None):
+        def _add(item_type: str, item_id: str, title: str, scheduled: str | None, deadline: str | None, estimated_minutes: int | None, score: float | None):
             if preserve_existing_scheduled and (scheduled or "").startswith(target_date):
                 return
             urgency_rank = 3
@@ -353,9 +353,6 @@ class PlanningService:
                     "estimated_minutes": estimated_minutes or 30,
                     "score": score or 0,
                     "urgency_rank": urgency_rank,
-                    "preferred_start": preferred_start,
-                    "preferred_end": preferred_end,
-                    "preferred_time_mode": preferred_time_mode,
                 }
             )
 
@@ -374,9 +371,6 @@ class PlanningService:
                 item.deadline,
                 item.estimated_minutes,
                 item.score,
-                item.preferred_start,
-                item.preferred_end,
-                item.preferred_time_mode,
             )
 
         ordered = sorted(
@@ -407,19 +401,11 @@ class PlanningService:
 
     def _place_candidate(self, candidate: dict, free_slots: list[tuple[datetime, datetime]]) -> tuple[datetime, datetime] | None:
         duration = timedelta(minutes=candidate["estimated_minutes"])
-        preferred_start = self._parse_iso(candidate["preferred_start"]) if candidate.get("preferred_start") else None
-        preferred_end = self._parse_iso(candidate["preferred_end"]) if candidate.get("preferred_end") else None
-        preferred_mode = (candidate.get("preferred_time_mode") or "soft").strip().lower()
 
         for start, end in free_slots:
             candidate_start = start
             candidate_end = start + duration
-            if preferred_start and candidate_start < preferred_start:
-                candidate_start = preferred_start
-                candidate_end = candidate_start + duration
             if candidate_end > end:
-                continue
-            if preferred_end and candidate_end > preferred_end and preferred_mode == "hard":
                 continue
             return candidate_start, candidate_end
         return None

@@ -197,6 +197,9 @@ class Settings(BaseSettings):
             contexts_property=None,
             assigned_property=None,
             score_property="Score",
+            preferred_start_property=None,
+            preferred_end_property=None,
+            preferred_time_mode_property=None,
         )
     )
     events_db: NotionDatabaseConfig = Field(

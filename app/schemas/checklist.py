@@ -14,8 +14,5 @@ class ChecklistItemRecord(BaseModel):
     deadline: str | None = None
     estimated_minutes: int | None = None
     score: float | None = None
-    preferred_start: str | None = None
-    preferred_end: str | None = None
-    preferred_time_mode: str | None = None
     schedule_filter: bool | None = None
     raw: dict[str, Any] = Field(default_factory=dict)

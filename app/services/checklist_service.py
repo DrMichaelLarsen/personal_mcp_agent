@@ -80,9 +80,6 @@ class ChecklistService:
             deadline=_as_date_start(props.get(cfg.deadline_property)) if cfg.deadline_property else None,
             estimated_minutes=_as_minutes(props.get(cfg.estimate_property)) if cfg.estimate_property else None,
             score=props.get(cfg.score_property) if cfg.score_property else None,
-            preferred_start=_as_date_start(props.get(cfg.preferred_start_property)) if cfg.preferred_start_property else None,
-            preferred_end=_as_date_start(props.get(cfg.preferred_end_property)) if cfg.preferred_end_property else None,
-            preferred_time_mode=props.get(cfg.preferred_time_mode_property) if cfg.preferred_time_mode_property else None,
             schedule_filter=bool(props.get(cfg.schedule_filter_property)) if cfg.schedule_filter_property else None,
             raw=raw,
         )

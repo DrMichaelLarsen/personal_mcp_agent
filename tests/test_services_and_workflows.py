@@ -301,15 +301,11 @@ def test_checklist_record_mapping_coerces_dict_date_fields_to_start_string():
             settings.checklist_items_db.title_property: "Checklist title",
             settings.checklist_items_db.scheduled_property: {"start": "2026-03-25T10:00:00", "end": "2026-03-25T10:20:00"},
             settings.checklist_items_db.deadline_property: {"start": "2026-03-25T16:00:00", "end": "2026-03-25T16:30:00"},
-            settings.checklist_items_db.preferred_start_property: {"start": "2026-03-25T11:00:00", "end": "2026-03-25T11:15:00"},
-            settings.checklist_items_db.preferred_end_property: {"start": "2026-03-25T13:00:00", "end": "2026-03-25T13:15:00"},
         },
     }
     mapped = checklist._to_record(raw)
     assert mapped.scheduled == "2026-03-25T10:00:00"
     assert mapped.deadline == "2026-03-25T16:00:00"
-    assert mapped.preferred_start == "2026-03-25T11:00:00"
-    assert mapped.preferred_end == "2026-03-25T13:00:00"
 
 
 def test_event_service_ignores_all_day_events_for_day_schedule():
