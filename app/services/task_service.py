@@ -157,11 +157,13 @@ class TaskService:
         items = [self._to_record(item) for item in self.notion.query_database(cfg.database_id, filters)]
         return [item for item in items if item.status != "Complete"]
 
-    def clear_schedule_for_day(self, day: str) -> int:
+    def clear_schedule_for_day(self, day: str, tasks: list[TaskRecord] | None = None) -> int:
         cleared = 0
-        for task in self.list_open_tasks():
+        source = tasks if tasks is not None else self.list_open_tasks()
+        for task in source:
             if (task.scheduled or "").startswith(day):
                 self.set_schedule(task.id, None)
+                task.scheduled = None
                 cleared += 1
         return cleared
 

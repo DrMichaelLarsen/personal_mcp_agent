@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 import httpx
@@ -26,8 +27,23 @@ class NotionClient:
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        with httpx.Client(timeout=30.0) as client:
-            response = client.request(method, url, headers=self._headers(), json=payload)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=45.0) as client:
+                    response = client.request(method, url, headers=self._headers(), json=payload)
+                break
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
+                last_exc = exc
+                if attempt == 2:
+                    raise RuntimeError(f"Notion request timed out on {path}: {exc}") from exc
+                time.sleep(0.4 * (attempt + 1))
+            except httpx.RequestError as exc:
+                raise RuntimeError(f"Notion request failed on {path}: {exc}") from exc
+        else:
+            if last_exc is not None:
+                raise RuntimeError(f"Notion request failed on {path}: {last_exc}") from last_exc
+            raise RuntimeError(f"Notion request failed on {path}: unknown error")
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

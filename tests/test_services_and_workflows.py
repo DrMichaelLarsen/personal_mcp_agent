@@ -291,6 +291,31 @@ def test_checklist_service_can_map_and_clear_schedule():
     assert checklist.get_item(raw["id"]).scheduled is None
 
 
+def test_checklist_clear_schedule_for_day_uses_prefetched_items_without_refetching():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    first = notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "A",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-25T08:00:00",
+        },
+    )
+    second = notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "B",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-26T08:00:00",
+        },
+    )
+    items = [checklist.get_item(first["id"]), checklist.get_item(second["id"])]
+    checklist.list_open_items = lambda: (_ for _ in ()).throw(RuntimeError("should not refetch"))
+    cleared = checklist.clear_schedule_for_day("2026-03-25", items=items)
+    assert cleared == 1
+
+
 def test_checklist_record_mapping_coerces_dict_date_fields_to_start_string():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     checklist = ChecklistService(notion, settings)
@@ -453,6 +478,33 @@ def test_build_day_schedule_respects_schedule_formula_filter_for_tasks_and_check
     assert "Checklist allowed" in scheduled_titles
     assert "Task blocked" not in scheduled_titles
     assert "Checklist blocked" not in scheduled_titles
+
+
+def test_build_day_schedule_start_from_scratch_does_not_refetch_tasks_or_checklist_for_clear_phase():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+    existing_task = tasks.create_task(TaskCreateInput(title="Existing task", project_id=project.id, scheduled="2026-03-25T08:00:00", estimated_minutes=30))
+    assert existing_task.task is not None
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Existing checklist",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-25T09:00:00",
+            settings.checklist_items_db.estimate_property: 20,
+        },
+    )
+
+    loaded_tasks = tasks.list_open_tasks()
+    loaded_checklist = checklist.list_open_items()
+
+    tasks.list_open_tasks = lambda project_id=None: (_ for _ in ()).throw(RuntimeError("should not refetch tasks"))
+    checklist.list_open_items = lambda: (_ for _ in ()).throw(RuntimeError("should not refetch checklist"))
+
+    assert tasks.clear_schedule_for_day("2026-03-25", tasks=loaded_tasks) == 1
+    assert checklist.clear_schedule_for_day("2026-03-25", items=loaded_checklist) == 1
 
 
 def test_build_day_schedule_places_due_items_around_events_and_existing_schedule():

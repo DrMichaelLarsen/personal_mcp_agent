@@ -32,11 +32,13 @@ class ChecklistService:
             self.notion.update_page(item_id, properties)
         return self.get_item(item_id)
 
-    def clear_schedule_for_day(self, day: str) -> int:
+    def clear_schedule_for_day(self, day: str, items: list[ChecklistItemRecord] | None = None) -> int:
         cleared = 0
-        for item in self.list_open_items():
+        source = items if items is not None else self.list_open_items()
+        for item in source:
             if (item.scheduled or "").startswith(day):
                 self.set_schedule(item.id, None)
+                item.scheduled = None
                 cleared += 1
         return cleared
 

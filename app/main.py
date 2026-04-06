@@ -355,17 +355,20 @@ def _build_day_schedule(payload: DayScheduleBuildInput):
             "context": payload.model_dump(),
         },
     )
+    tasks = task_service.list_open_tasks()
+    checklist_items = checklist_service.list_open_items()
+
     if not payload.preserve_existing_scheduled:
-        cleared_tasks = task_service.clear_schedule_for_day(payload.target_date)
-        cleared_checklist = checklist_service.clear_schedule_for_day(payload.target_date)
+        cleared_tasks = task_service.clear_schedule_for_day(payload.target_date, tasks=tasks)
+        cleared_checklist = checklist_service.clear_schedule_for_day(payload.target_date, items=checklist_items)
         cleared_existing_count = cleared_tasks + cleared_checklist
     else:
         cleared_existing_count = 0
 
     result = planning_service.build_day_schedule(
         target_date=payload.target_date,
-        tasks=task_service.list_open_tasks(),
-        checklist_items=checklist_service.list_open_items(),
+        tasks=tasks,
+        checklist_items=checklist_items,
         events=event_service.list_events_for_day(payload.target_date),
         preserve_existing_scheduled=payload.preserve_existing_scheduled,
         day_start=payload.day_start,
