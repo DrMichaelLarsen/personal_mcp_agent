@@ -308,6 +308,22 @@ def test_checklist_record_mapping_coerces_dict_date_fields_to_start_string():
     assert mapped.deadline == "2026-03-25T16:00:00"
 
 
+def test_checklist_record_mapping_does_not_treat_non_boolean_done_text_as_completed():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    raw = {
+        "id": "checklist-done-shape-1",
+        "title": "Fallback title",
+        "properties": {
+            settings.checklist_items_db.title_property: "Checklist title",
+            settings.checklist_items_db.done_property: "To do",
+            settings.checklist_items_db.status_property: "In Progress",
+        },
+    }
+    mapped = checklist._to_record(raw)
+    assert mapped.done is False
+
+
 def test_event_service_ignores_all_day_events_for_day_schedule():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     event_service = EventService(notion, settings)

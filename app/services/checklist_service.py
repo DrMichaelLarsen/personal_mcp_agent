@@ -47,6 +47,16 @@ class ChecklistService:
         props = raw.get("properties", {})
         cfg = self.settings.checklist_items_db
 
+        def _as_done(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return value != 0
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                return normalized in {"done", "complete", "completed", "true", "yes", "1"}
+            return False
+
         def _as_date_start(value):
             if value is None:
                 return None
@@ -75,7 +85,7 @@ class ChecklistService:
             id=raw["id"],
             title=props.get(cfg.title_property) or raw.get("title", ""),
             status=props.get(cfg.status_property) if cfg.status_property else None,
-            done=bool(props.get(cfg.done_property)) if cfg.done_property else False,
+            done=_as_done(props.get(cfg.done_property)) if cfg.done_property else False,
             scheduled=_as_date_start(props.get(cfg.scheduled_property)) if cfg.scheduled_property else None,
             deadline=_as_date_start(props.get(cfg.deadline_property)) if cfg.deadline_property else None,
             estimated_minutes=_as_minutes(props.get(cfg.estimate_property)) if cfg.estimate_property else None,
