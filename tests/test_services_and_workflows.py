@@ -661,6 +661,78 @@ def test_build_day_schedule_start_from_scratch_can_replace_existing_schedule():
     assert reset_item.start == "2026-03-25T09:00:00"
 
 
+def test_build_day_schedule_urgent_overtime_is_capped_to_two_hours_past_day_end():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+    long_task = tasks.create_task(
+        TaskCreateInput(
+            title="Long deep work",
+            project_id=project.id,
+            deadline="2026-03-25",
+            estimated_minutes=260,
+        )
+    )
+    assert long_task.task is not None
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T19:00:00",
+        preview_only=True,
+    )
+
+    scheduled_titles = {item.title for item in result.scheduled_items if item.source == "new"}
+    assert "Long deep work" in scheduled_titles
+    assert all(item.end <= "2026-03-25T21:00:00" for item in result.scheduled_items if item.source == "new")
+
+    late_result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T18:40:00",
+        day_end="2026-03-25T19:00:00",
+        preview_only=True,
+    )
+    assert all(item.end <= "2026-03-25T21:00:00" for item in late_result.scheduled_items if item.source == "new")
+    assert any(item.get("id") == long_task.task.id for item in late_result.unscheduled_items)
+
+
+def test_build_day_schedule_non_urgent_task_does_not_get_overtime_placement():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+    normal_task = tasks.create_task(
+        TaskCreateInput(
+            title="Normal priority deep work",
+            project_id=project.id,
+            deadline="2026-03-30",
+            estimated_minutes=120,
+        )
+    )
+    assert normal_task.task is not None
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T18:30:00",
+        day_end="2026-03-25T19:00:00",
+        preview_only=True,
+    )
+
+    assert all(item.item_id != normal_task.task.id for item in result.scheduled_items if item.source == "new")
+    assert any(item.get("id") == normal_task.task.id for item in result.unscheduled_items)
+
+
 def test_build_day_schedule_for_today_does_not_schedule_in_the_past():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
@@ -1672,6 +1744,48 @@ def test_process_task_inbox_enriches_missing_fields_and_marks_processed():
     assert "- tags:" in (updated.notes or "")
 
 
+def test_process_task_inbox_skips_already_processed_and_avoids_llm_calls(tmp_path):
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.llm.enabled = True
+    settings.llm.use_for_task_inbox = True
+    settings.llm.cost_ledger_path = str(tmp_path / "task_inbox_skip_costs.jsonl")
+    llm = FakeLLMClient(default_response={"importance": 120})
+    workflow = ProcessTaskInboxWorkflow(
+        {
+            "task_service": tasks,
+            "project_service": projects,
+            "matching_service": matching,
+            "llm_client": llm,
+            "settings": settings,
+            "cost_service": CostService(settings.llm),
+        }
+    )
+    processed = tasks.create_task(
+        TaskCreateInput(
+            title="Already processed task",
+            status="To do",
+            tags=["Inbox Processed"],
+        )
+    )
+    assert processed.task is not None
+    notion.pages[processed.task.id]["properties"]["Inbox"] = True
+
+    result = workflow.run(
+        ProcessTaskInboxInput(
+            preview_only=False,
+            max_count=20,
+            include_statuses=["To do", "Not started"],
+            inbox_formula_property="Inbox",
+            processed_tag="Inbox Processed",
+        )
+    )
+
+    assert result.processed_count == 0
+    assert result.updated_count == 0
+    assert result.results == []
+    assert llm.calls == []
+
+
 def test_process_task_inbox_creates_project_when_explicitly_requested():
     settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
     settings.contexts_db.database_id = "contexts-db"
@@ -1987,6 +2101,47 @@ def test_process_notes_inbox_filters_only_formula_inbox_true():
     )
     assert result.processed_count == 1
     assert result.results[0].note_id == included.note.id
+
+
+def test_process_notes_inbox_skips_already_processed_and_avoids_llm_calls(tmp_path):
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    settings.llm.enabled = True
+    settings.llm.use_for_notes_inbox = True
+    settings.llm.cost_ledger_path = str(tmp_path / "notes_inbox_skip_costs.jsonl")
+    llm = FakeLLMClient(default_response={"tags": ["Reference"]})
+    workflow = ProcessNotesInboxWorkflow(
+        {
+            "note_service": notes,
+            "project_service": projects,
+            "matching_service": matching,
+            "llm_client": llm,
+            "settings": settings,
+            "cost_service": CostService(settings.llm),
+        }
+    )
+    processed = notes.create_note(
+        NoteCreateInput(
+            title="Already processed note",
+            content="reference",
+            tags=["Inbox Processed"],
+        )
+    )
+    assert processed.note is not None
+    notion.pages[processed.note.id]["properties"]["Inbox"] = True
+
+    result = workflow.run(
+        ProcessNotesInboxInput(
+            preview_only=False,
+            max_count=20,
+            inbox_formula_property="Inbox",
+            processed_tag="Inbox Processed",
+        )
+    )
+
+    assert result.processed_count == 0
+    assert result.updated_count == 0
+    assert result.results == []
+    assert llm.calls == []
 
 
 def test_note_record_mapping_coerces_relation_lists_for_project_and_area():

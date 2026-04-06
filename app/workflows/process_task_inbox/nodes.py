@@ -186,6 +186,21 @@ def fetch_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSta
 def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxState:
     request = deps["request"]
     preview_only = request.preview_only
+    inbox_tasks = state.get("tasks", [])
+    if not inbox_tasks:
+        logger.info(
+            "No task inbox candidates found; skipping enrichment stage.",
+            extra={
+                "event": "workflow.process_task_inbox.enrich.skipped_empty",
+                "context": {
+                    "preview_only": preview_only,
+                    "processed_tag": request.processed_tag,
+                    "inbox_formula_property": request.inbox_formula_property,
+                },
+            },
+        )
+        return {**state, "results": []}
+
     task_service = deps["task_service"]
     project_service = deps["project_service"]
     matching_service = deps["matching_service"]
@@ -206,7 +221,7 @@ def enrich_tasks(state: ProcessTaskInboxState, deps: dict) -> ProcessTaskInboxSt
         },
     )
 
-    for task in state.get("tasks", []):
+    for task in inbox_tasks:
         content = f"{task.title}\n\n{task.notes or ''}"
         changed: dict = {}
         review_items = []

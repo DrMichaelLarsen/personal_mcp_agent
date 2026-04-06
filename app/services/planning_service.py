@@ -225,7 +225,10 @@ class PlanningService:
                 else:
                     late_anchor = now if is_today else work_end
                     late_start = max(work_end, max((end for _, end in intervals), default=work_end), late_anchor)
-                    placement = (late_start, late_start + timedelta(minutes=candidate["estimated_minutes"]))
+                    late_end = late_start + timedelta(minutes=candidate["estimated_minutes"])
+                    late_cutoff = work_end + timedelta(hours=2)
+                    if late_end <= late_cutoff:
+                        placement = (late_start, late_end)
             if placement is None:
                 unscheduled_items.append(candidate)
                 continue

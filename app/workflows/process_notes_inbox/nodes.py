@@ -180,6 +180,10 @@ def fetch_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInboxS
 def enrich_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInboxState:
     request = deps["request"]
     preview_only = request.preview_only
+    inbox_notes = state.get("notes", [])
+    if not inbox_notes:
+        return {**state, "results": []}
+
     note_service = deps["note_service"]
     project_service = deps["project_service"]
     matching_service = deps["matching_service"]
@@ -204,7 +208,7 @@ def enrich_notes(state: ProcessNotesInboxState, deps: dict) -> ProcessNotesInbox
     }
     results: list[NotesInboxItemResult] = []
 
-    for note in state.get("notes", []):
+    for note in inbox_notes:
         content = f"{note.title}\n\n{note.content or ''}"
         changed: dict = {}
         review_items = []
