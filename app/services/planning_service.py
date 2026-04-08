@@ -152,7 +152,7 @@ class PlanningService:
 
         scheduled_items: list[ScheduledItem] = []
         if preserve_existing_scheduled:
-            for existing in self._existing_scheduled_items(tasks, checklist_items, target_date):
+            for existing in self._existing_scheduled_items(tasks, checklist_items, target_date, now):
                 start = self._parse_iso(existing["scheduled"])
                 end = start + timedelta(minutes=existing["estimated_minutes"])
                 intervals.append((start, end))
@@ -235,6 +235,7 @@ class PlanningService:
                 continue
             start, end = placement
             self._consume_slot(free_slots, start, end)
+            intervals.append((start, end))
             scheduled_items.append(
                 ScheduledItem(
                     item_id=candidate["id"],
@@ -299,10 +300,16 @@ class PlanningService:
         timezone_name = self.settings.calendar.timezone or "America/Denver"
         return parsed.astimezone(ZoneInfo(timezone_name)).replace(tzinfo=None)
 
-    def _existing_scheduled_items(self, tasks: list[TaskRecord], checklist_items: list[ChecklistItemRecord], target_date: str) -> list[dict]:
+    def _existing_scheduled_items(
+        self,
+        tasks: list[TaskRecord],
+        checklist_items: list[ChecklistItemRecord],
+        target_date: str,
+        now: datetime,
+    ) -> list[dict]:
         existing: list[dict] = []
         for task in tasks:
-            if (task.scheduled or "").startswith(target_date):
+            if self._should_preserve_existing_schedule(task.scheduled, target_date, now):
                 existing.append(
                     {
                         "id": task.id,
@@ -315,7 +322,7 @@ class PlanningService:
                     }
                 )
         for item in checklist_items:
-            if (item.scheduled or "").startswith(target_date):
+            if self._should_preserve_existing_schedule(item.scheduled, target_date, now):
                 existing.append(
                     {
                         "id": item.id,
@@ -346,7 +353,7 @@ class PlanningService:
         require_checklist_schedule_filter = bool((self.settings.checklist_items_db.schedule_filter_property or "").strip())
 
         def _add(item_type: str, item_id: str, title: str, scheduled: str | None, deadline: str | None, estimated_minutes: int | None, score: float | None):
-            if preserve_existing_scheduled and (scheduled or "").startswith(target_date):
+            if preserve_existing_scheduled and self._should_preserve_existing_schedule(scheduled, target_date, now):
                 return
             if self._is_future_timed_schedule(scheduled, now):
                 return
@@ -398,8 +405,23 @@ class PlanningService:
         )
         return ordered[:max_candidates]
 
+    def _should_preserve_existing_schedule(self, scheduled: str | None, target_date: str, now: datetime) -> bool:
+        if not scheduled or not scheduled.startswith(target_date):
+            return False
+        if not self._is_timed_schedule(scheduled):
+            return False
+        if target_date != now.date().isoformat():
+            return True
+        try:
+            return self._parse_iso(scheduled) >= now
+        except ValueError:
+            return False
+
+    def _is_timed_schedule(self, scheduled: str | None) -> bool:
+        return bool(scheduled and "T" in scheduled)
+
     def _is_future_timed_schedule(self, scheduled: str | None, now: datetime) -> bool:
-        if not scheduled or "T" not in scheduled:
+        if not self._is_timed_schedule(scheduled):
             return False
         try:
             return self._parse_iso(scheduled) > now

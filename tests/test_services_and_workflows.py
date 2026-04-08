@@ -834,6 +834,85 @@ def test_build_day_schedule_for_today_does_not_schedule_in_the_past():
     assert all(item.start >= "2026-03-25T13:20:00" for item in new_items)
 
 
+def test_build_day_schedule_for_today_reclaims_past_timed_items_instead_of_preserving_them():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+
+    missed = tasks.create_task(
+        TaskCreateInput(title="Missed timed task", project_id=project.id, scheduled="2026-03-25T09:00:00", estimated_minutes=30)
+    )
+    due_now = tasks.create_task(
+        TaskCreateInput(title="Due now", project_id=project.id, deadline="2026-03-25", estimated_minutes=30)
+    )
+    assert missed.task is not None
+    assert due_now.task is not None
+
+    planning._now = lambda: datetime.fromisoformat("2026-03-25T13:20:00")
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T17:00:00",
+        preview_only=True,
+    )
+
+    existing_titles = {item.title for item in result.scheduled_items if item.source == "existing"}
+    new_items = [item for item in result.scheduled_items if item.source == "new"]
+    new_titles = {item.title for item in new_items}
+
+    assert "Missed timed task" not in existing_titles
+    assert "Missed timed task" in new_titles
+    assert "Due now" in new_titles
+    assert all(item.start >= "2026-03-25T13:20:00" for item in new_items)
+
+
+def test_build_day_schedule_urgent_overtime_does_not_overlap_multiple_items():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+
+    for index in range(3):
+        created = tasks.create_task(
+            TaskCreateInput(
+                title=f"Urgent task {index + 1}",
+                project_id=project.id,
+                deadline="2026-03-25",
+                estimated_minutes=60,
+            )
+        )
+        assert created.task is not None
+
+    planning._now = lambda: datetime.fromisoformat("2026-03-25T16:00:00")
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=[],
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T17:00:00",
+        preview_only=True,
+    )
+
+    new_items = [item for item in result.scheduled_items if item.source == "new"]
+    assert [item.start for item in new_items] == [
+        "2026-03-25T16:00:00",
+        "2026-03-25T17:00:00",
+        "2026-03-25T18:00:00",
+    ]
+    assert [item.end for item in new_items] == [
+        "2026-03-25T17:00:00",
+        "2026-03-25T18:00:00",
+        "2026-03-25T19:00:00",
+    ]
+
+
 def test_build_day_schedule_for_today_handles_utc_bounds_without_past_scheduling():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     settings.calendar.timezone = "America/Denver"
