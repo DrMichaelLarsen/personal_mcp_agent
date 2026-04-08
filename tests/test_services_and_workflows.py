@@ -596,6 +596,8 @@ def test_build_day_schedule_start_from_scratch_does_not_refetch_tasks_or_checkli
 def test_build_day_schedule_places_due_items_around_events_and_existing_schedule():
     settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
     checklist = ChecklistService(notion, settings)
+    settings.events_db.start_property = "Start"
+    settings.events_db.end_property = "End"
     event_service = EventService(notion, settings)
     project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
     assert project.id
@@ -659,6 +661,81 @@ def test_build_day_schedule_start_from_scratch_can_replace_existing_schedule():
     reset_item = next(item for item in result.scheduled_items if item.title == "Reset me")
     assert reset_item.source == "new"
     assert reset_item.start == "2026-03-25T09:00:00"
+
+
+def test_build_day_schedule_skips_future_timed_items_but_can_reschedule_past_timed_and_future_day_items():
+    settings, notion, projects, matching, tasks, notes, calendar, email, planning = build_context()
+    checklist = ChecklistService(notion, settings)
+    settings.checklist_items_db.schedule_filter_property = None
+    project = projects.create_project(ProjectCreateInput(title="Project Alpha", area_id="area-1"))
+    assert project.id
+
+    future_timed_task = tasks.create_task(
+        TaskCreateInput(title="Future timed task", project_id=project.id, scheduled="2026-03-26T09:00:00", estimated_minutes=30)
+    )
+    future_day_task = tasks.create_task(
+        TaskCreateInput(title="Future day task", project_id=project.id, scheduled="2026-03-26", estimated_minutes=30)
+    )
+    past_timed_task = tasks.create_task(
+        TaskCreateInput(title="Past timed task", project_id=project.id, scheduled="2026-03-24T09:00:00", estimated_minutes=30)
+    )
+    assert future_timed_task.task is not None
+    assert future_day_task.task is not None
+    assert past_timed_task.task is not None
+
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Future timed checklist",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-26T11:00:00",
+            settings.checklist_items_db.estimate_property: 20,
+        },
+    )
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Future day checklist",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-26",
+            settings.checklist_items_db.estimate_property: 20,
+        },
+    )
+    notion.create_page(
+        settings.checklist_items_db.database_id,
+        {
+            settings.checklist_items_db.title_property: "Past timed checklist",
+            settings.checklist_items_db.done_property: False,
+            settings.checklist_items_db.scheduled_property: "2026-03-24T11:00:00",
+            settings.checklist_items_db.estimate_property: 20,
+        },
+    )
+
+    planning._now = lambda: datetime.fromisoformat("2026-03-25T10:00:00")
+
+    result = planning.build_day_schedule(
+        target_date="2026-03-25",
+        tasks=tasks.list_open_tasks(),
+        checklist_items=checklist.list_open_items(),
+        events=[],
+        preserve_existing_scheduled=True,
+        day_start="2026-03-25T08:00:00",
+        day_end="2026-03-25T17:00:00",
+        preview_only=True,
+    )
+
+    scheduled_titles = {item.title for item in result.scheduled_items if item.source == "new"}
+    unscheduled_titles = {item.get("title") for item in result.unscheduled_items}
+
+    assert "Future day task" in scheduled_titles
+    assert "Past timed task" in scheduled_titles
+    assert "Future day checklist" in scheduled_titles
+    assert "Past timed checklist" in scheduled_titles
+
+    assert "Future timed task" not in scheduled_titles
+    assert "Future timed checklist" not in scheduled_titles
+    assert "Future timed task" not in unscheduled_titles
+    assert "Future timed checklist" not in unscheduled_titles
 
 
 def test_build_day_schedule_urgent_overtime_is_capped_to_two_hours_past_day_end():

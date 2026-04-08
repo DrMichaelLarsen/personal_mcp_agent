@@ -186,6 +186,7 @@ class PlanningService:
             tasks=tasks,
             checklist_items=checklist_items,
             preserve_existing_scheduled=preserve_existing_scheduled,
+            now=now,
             include_due_tomorrow=include_due_tomorrow,
             max_candidates=max_candidates,
         )
@@ -335,6 +336,7 @@ class PlanningService:
         tasks: list[TaskRecord],
         checklist_items: list[ChecklistItemRecord],
         preserve_existing_scheduled: bool,
+        now: datetime,
         include_due_tomorrow: bool,
         max_candidates: int,
     ) -> list[dict]:
@@ -345,6 +347,8 @@ class PlanningService:
 
         def _add(item_type: str, item_id: str, title: str, scheduled: str | None, deadline: str | None, estimated_minutes: int | None, score: float | None):
             if preserve_existing_scheduled and (scheduled or "").startswith(target_date):
+                return
+            if self._is_future_timed_schedule(scheduled, now):
                 return
             urgency_rank = 3
             if deadline and deadline < target_date:
@@ -393,6 +397,14 @@ class PlanningService:
             ),
         )
         return ordered[:max_candidates]
+
+    def _is_future_timed_schedule(self, scheduled: str | None, now: datetime) -> bool:
+        if not scheduled or "T" not in scheduled:
+            return False
+        try:
+            return self._parse_iso(scheduled) > now
+        except ValueError:
+            return False
 
     def _compute_free_slots(self, work_start: datetime, work_end: datetime, intervals: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
         slots: list[tuple[datetime, datetime]] = []
