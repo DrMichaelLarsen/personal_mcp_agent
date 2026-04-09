@@ -1989,6 +1989,68 @@ def test_process_task_inbox_skips_already_processed_and_avoids_llm_calls(tmp_pat
     assert llm.calls == []
 
 
+def test_process_task_inbox_uses_full_page_content_for_schedule_hints(monkeypatch):
+    import app.workflows.process_task_inbox.nodes as task_inbox_nodes
+
+    original_date = task_inbox_nodes.date
+
+    class _FixedDate:
+        @staticmethod
+        def today():
+            return original_date(2026, 4, 9)
+
+    settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
+    monkeypatch.setattr(task_inbox_nodes, "date", _FixedDate)
+
+    workflow = ProcessTaskInboxWorkflow(
+        {
+            "task_service": tasks,
+            "project_service": projects,
+            "matching_service": matching,
+        }
+    )
+    inbox = tasks.create_task(
+        TaskCreateInput(
+            title="Prep clinic paperwork",
+            status="To do",
+            deadline="2026-04-10",
+            tags=[],
+        )
+    )
+    assert inbox.task is not None
+    notion.append_markdown(inbox.task.id, "Schedule for today please")
+    notion.pages[inbox.task.id]["properties"]["Inbox"] = True
+
+    original_query_database = notion.query_database
+
+    def _query_without_children(database_id: str, filters: dict | None = None):
+        items = original_query_database(database_id, filters)
+        stripped = []
+        for item in items:
+            copy = dict(item)
+            copy["properties"] = dict(item.get("properties", {}))
+            copy.pop("children", None)
+            stripped.append(copy)
+        return stripped
+
+    notion.query_database = _query_without_children
+
+    result = workflow.run(
+        ProcessTaskInboxInput(
+            preview_only=False,
+            max_count=20,
+            include_statuses=["To do", "Not started"],
+            inbox_formula_property="Inbox",
+            processed_tag="Inbox Processed",
+        )
+    )
+
+    assert result.processed_count == 1
+    updated = tasks.get_task(inbox.task.id)
+    assert updated.scheduled == "2026-04-09"
+    assert updated.deadline == "2026-04-10"
+
+
 def test_process_task_inbox_creates_project_when_explicitly_requested():
     settings, notion, projects, matching, tasks, notes, calendar, email, _ = build_context()
     settings.contexts_db.database_id = "contexts-db"

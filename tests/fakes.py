@@ -90,7 +90,7 @@ class FakeNotionClient:
         self.pages[page_id]["properties"].update(properties)
         return self.pages[page_id]
 
-    def get_page(self, page_id: str):
+    def get_page(self, page_id: str, include_children: bool = False):
         return self.pages[page_id]
 
     def set_page_property(self, page_id: str, property_name: str, value):

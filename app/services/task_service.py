@@ -237,6 +237,15 @@ class TaskService:
                 continue
             candidates.append(task)
         limited = candidates[: max(1, max_count)]
+        hydrated: list[TaskRecord] = []
+        for task in limited:
+            try:
+                full_page = self.notion.get_page(task.id, include_children=True)
+                hydrated.append(self._to_record(full_page))
+            except TypeError:
+                hydrated.append(self._to_record(self.notion.get_page(task.id)))
+            except Exception:
+                hydrated.append(task)
         logger.info(
             "Selected task inbox candidates.",
             extra={
@@ -256,7 +265,7 @@ class TaskService:
                 },
             },
         )
-        return limited
+        return hydrated
 
     def append_ai_decision_note(self, task_id: str, changed_fields: dict, source: str = "process_task_inbox") -> None:
         if not changed_fields:

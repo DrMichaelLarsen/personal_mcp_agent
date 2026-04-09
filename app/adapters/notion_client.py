@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -383,6 +384,59 @@ class NotionClient:
             "properties": normalized_props,
         }
 
+    def _extract_rich_text_plain(self, items: list[dict[str, Any]] | None) -> str:
+        if not isinstance(items, list):
+            return ""
+        return "".join(item.get("plain_text", "") for item in items if isinstance(item, dict))
+
+    def _normalize_block(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        block_type = raw.get("type")
+        payload = raw.get(block_type, {}) if isinstance(block_type, str) else {}
+        normalized: list[dict[str, Any]] = []
+        block: dict[str, Any] | None = None
+
+        if block_type in {"paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do", "callout"}:
+            block = {
+                "type": block_type,
+                "text": self._extract_rich_text_plain(payload.get("rich_text")),
+            }
+            if block_type == "to_do":
+                block["checked"] = bool(payload.get("checked", False))
+            if block_type == "callout" and payload.get("color"):
+                block["color"] = payload.get("color")
+        elif block_type == "quote":
+            block = {
+                "type": "paragraph",
+                "text": self._extract_rich_text_plain(payload.get("rich_text")),
+            }
+        elif block_type == "child_page":
+            block = {
+                "type": "paragraph",
+                "text": payload.get("title") or "",
+            }
+
+        if block and block.get("text"):
+            normalized.append(block)
+
+        if raw.get("has_children") and raw.get("id"):
+            normalized.extend(self._fetch_block_children(raw["id"]))
+        return normalized
+
+    def _fetch_block_children(self, block_id: str) -> list[dict[str, Any]]:
+        path = f"/blocks/{block_id}/children?page_size=100"
+        results: list[dict[str, Any]] = []
+        while True:
+            raw = self._request("GET", path)
+            for item in raw.get("results", []):
+                if isinstance(item, dict):
+                    results.extend(self._normalize_block(item))
+            next_cursor = raw.get("next_cursor")
+            if raw.get("has_more") and next_cursor:
+                path = f"/blocks/{block_id}/children?page_size=100&start_cursor={quote(str(next_cursor), safe='')}"
+            else:
+                break
+        return results
+
     def create_page(self, database_id: str, properties: dict[str, Any], children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         property_schemas = self._get_database_schema(database_id)
         property_types = self._get_database_property_types(database_id)
@@ -459,9 +513,14 @@ class NotionClient:
         raw = self._request("PATCH", f"/pages/{page_id}", {"properties": {property_name: encoded}})
         return self._normalize_page(raw)
 
-    def get_page(self, page_id: str) -> dict[str, Any]:
+    def get_page(self, page_id: str, include_children: bool = False) -> dict[str, Any]:
         raw = self._request("GET", f"/pages/{page_id}")
-        return self._normalize_page(raw)
+        normalized = self._normalize_page(raw)
+        if include_children:
+            children = self._fetch_block_children(page_id)
+            if children:
+                normalized["children"] = children
+        return normalized
 
     def query_database(self, database_id: str, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         property_types = self._get_database_property_types(database_id)
