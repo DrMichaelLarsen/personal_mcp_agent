@@ -1027,6 +1027,53 @@ def test_email_label_based_routing_task_and_note():
     assert categories["label-note-1"] == "note"
 
 
+def test_process_emails_with_no_messages_avoids_llm_calls():
+    settings, _, projects, matching, tasks, notes, calendar, _, _ = build_context()
+    settings.llm.enabled = True
+    settings.llm.use_for_email_analysis = True
+    llm = FakeLLMClient(
+        default_response={
+            "summary": "Should not be used",
+            "outline": [],
+            "action_items": [],
+            "events": [],
+            "suggested_title": "Unused",
+            "suggested_project_name": None,
+            "suggested_contexts": ["Computer"],
+            "suggested_importance": 50,
+            "suggested_time_required": 30,
+            "event_start_iso": None,
+            "event_end_iso": None,
+            "event_location": None,
+            "event_description": None,
+            "rationale": [],
+        }
+    )
+    email = EmailService(
+        FakeGmailClient([]),
+        settings,
+        analysis_service=EmailAnalysisService(llm_client=llm, settings=settings),
+    )
+    workflow = ProcessEmailsWorkflow(
+        {
+            "email_service": email,
+            "matching_service": matching,
+            "project_service": projects,
+            "task_service": tasks,
+            "note_service": notes,
+            "calendar_service": calendar,
+        }
+    )
+
+    result = workflow.run(ProcessEmailsInput(preview_only=False, max_count=10, mark_processed=True))
+
+    assert result.processed_count == 0
+    assert result.results == []
+    assert result.summary == {"emails": 0, "tasks": 0, "notes": 0, "events": 0, "review_required": 0}
+    assert llm.calls == []
+    assert email.gmail.processed == []
+
+
 def test_email_note_with_explicit_for_x_project_phrase_prefers_project_match():
     _, _, projects, matching, tasks, notes, calendar, email, _ = build_context()
     target_project = projects.create_project(
