@@ -18,7 +18,8 @@ dependencies = [
   "google-auth>=2.35.0",
   "google-auth-oauthlib>=1.2.1",
   "langgraph>=0.2.0",
-  "mcp>=1.0.0"
+  # MCP 2.x removed mcp.server.fastmcp; this app currently targets the 1.x SDK.
+  "mcp>=1.21.0,<2.0.0"
 ]
 
 [project.optional-dependencies]

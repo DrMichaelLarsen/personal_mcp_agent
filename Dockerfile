@@ -11,6 +11,10 @@ COPY app ./app
 
 RUN pip install --upgrade pip && pip install .
 
+# Fail the image build immediately if dependency resolution installs an
+# incompatible MCP SDK that no longer provides the FastMCP API used by the app.
+RUN python -c "from mcp.server.fastmcp import FastMCP"
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
