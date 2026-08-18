@@ -19,6 +19,7 @@ class ServiceContainer:
     checklist_service: object
     note_service: object
     calendar_service: object
+    calendar_sync_service: object
     event_service: object
     email_service: object
     planning_service: object

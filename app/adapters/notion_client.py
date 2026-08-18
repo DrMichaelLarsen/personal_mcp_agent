@@ -64,11 +64,11 @@ class NotionClient:
         def _looks_like_notion_id(raw: str) -> bool:
             return bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", raw, re.IGNORECASE))
 
-        if value is None:
-            return None
-
         if expected_type:
             return self._encode_property_by_type(expected_type, value, property_schema)
+
+        if value is None:
+            return None
 
         relation_like = {
             "project",
@@ -154,6 +154,13 @@ class NotionClient:
         property_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         expected = expected_type.strip().lower()
+
+        if value is None:
+            if expected in {"title", "rich_text", "multi_select", "people", "relation"}:
+                return {expected: []}
+            if expected in {"select", "status", "date", "url", "email", "phone_number"}:
+                return {expected: None}
+            return None
 
         def _id_list(raw: Any) -> list[dict[str, str]]:
             if isinstance(raw, str):
@@ -382,6 +389,8 @@ class NotionClient:
             "url": raw.get("url"),
             "title": title,
             "properties": normalized_props,
+            "created_time": raw.get("created_time"),
+            "last_edited_time": raw.get("last_edited_time"),
         }
 
     def _extract_rich_text_plain(self, items: list[dict[str, Any]] | None) -> str:
@@ -607,6 +616,32 @@ class NotionClient:
             else:
                 break
         return results
+
+    def query_database_date_range(
+        self,
+        database_id: str,
+        date_property: str,
+        start: str,
+        end: str,
+    ) -> list[dict[str, Any]]:
+        """Query pages whose date starts in the requested inclusive range."""
+        self._get_database_property_types(database_id)
+        payload: dict[str, Any] = {
+            "filter": {
+                "and": [
+                    {"property": date_property, "date": {"on_or_after": start}},
+                    {"property": date_property, "date": {"on_or_before": end}},
+                ]
+            }
+        }
+        results: list[dict[str, Any]] = []
+        while True:
+            raw = self._request("POST", f"/databases/{database_id}/query", payload)
+            results.extend(self._normalize_page(item) for item in raw.get("results", []))
+            if raw.get("has_more") and raw.get("next_cursor"):
+                payload["start_cursor"] = raw["next_cursor"]
+            else:
+                return results
 
     def _encode_blocks(self, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         notion_blocks: list[dict[str, Any]] = []

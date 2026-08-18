@@ -476,8 +476,9 @@ def test_set_schedule_writes_start_and_end_range_to_scheduled_property():
 
     task_raw = notion.get_page(task.task.id)
     checklist_page_raw = notion.get_page(checklist_raw["id"])
-    assert task_raw["properties"][settings.tasks_db.scheduled_property] == scheduled_range
-    assert checklist_page_raw["properties"][settings.checklist_items_db.scheduled_property] == scheduled_range
+    normalized_range = {"start": "2026-03-25T09:00:00-06:00", "end": "2026-03-25T09:45:00-06:00"}
+    assert task_raw["properties"][settings.tasks_db.scheduled_property] == normalized_range
+    assert checklist_page_raw["properties"][settings.checklist_items_db.scheduled_property] == normalized_range
     assert task_raw["properties"][settings.tasks_db.estimate_property] == 45
     assert checklist_page_raw["properties"][settings.checklist_items_db.estimate_property] == 21
 

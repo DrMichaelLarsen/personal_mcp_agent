@@ -1,5 +1,6 @@
 services:
   personal-productivity-mcp:
+    build: .
     image: ghcr.io/drmichaellarsen/personal_mcp_agent:latest
     container_name: personal-productivity-mcp
     restart: unless-stopped
@@ -8,4 +9,6 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - /mnt/user/appdata/personal-productivity-mcp/secrets:/config/secrets:ro
+      # OAuth refresh updates token.pickle, so this mount must be writable.
+      - /mnt/user/appdata/personal-productivity-mcp/secrets:/config/secrets
+      - /mnt/user/appdata/personal-productivity-mcp/data:/data

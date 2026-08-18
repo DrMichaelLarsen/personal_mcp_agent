@@ -117,7 +117,7 @@ Use these settings:
 - Volume mapping:
   - host: `/mnt/user/appdata/personal-productivity-mcp/secrets`
   - container: `/config/secrets`
-  - mode: read-only
+  - mode: read-write (Google refresh tokens are updated in place)
 - Env file: point to your `.env` if your workflow supports it, or enter the same variables manually
 
 ### Notes
@@ -132,6 +132,62 @@ Useful endpoints:
 - `POST /workflows/process-email-preview`
 - `POST /workflows/process-email`
 - `POST /workflows/process-inbox`
+- `POST /workflows/sync-calendar`
+
+## Google Calendar <-> Notion Events sync
+
+The agent can now replace the 2sync calendar workflow. It uses the existing
+Notion Events schema (`Event ID`, `Date`, `Item Link`, `Calendar Name`,
+`Description`, `Location`, `Sync Status`, and related fields).
+
+Default behavior is intentionally **Google authoritative**:
+
+- reads Google events for the next 92 days
+- creates or updates the matching Notion event page using `Event ID`
+- adds the Notion page URL to the Google event description
+- stores the Notion page ID/URL in Google private extended properties
+- maps cancellations to `Event Status=Cancelled` and `Sync Status=Removed`
+- handles timed and all-day events (including Google's exclusive all-day end date)
+
+Enable the 15-minute background sync with:
+
+```env
+PPMCP_CALENDAR__TOKEN_PATH=/config/secrets/token.pickle
+PPMCP_CALENDAR_SYNC__ENABLED=true
+PPMCP_CALENDAR_SYNC__INTERVAL_MINUTES=15
+PPMCP_CALENDAR_SYNC__LOOKAHEAD_DAYS=92
+PPMCP_CALENDAR_SYNC__MODE=google_authoritative
+PPMCP_CALENDAR_SYNC__CALENDAR_IDS=["primary"]
+PPMCP_CALENDAR_SYNC__STATE_PATH=/data/calendar_sync_state.json
+```
+
+For all visible calendars, use `PPMCP_CALENDAR_SYNC__CALENDAR_IDS=["*"]`.
+For a controlled subset, use the exact Google calendar IDs in the JSON list.
+
+Run a safe preview before enabling automatic writes:
+
+```bash
+curl -X POST http://UNRAID-IP:8001/workflows/sync-calendar \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run":true,"days_ahead":92}'
+```
+
+Then commit a Google-authoritative sync:
+
+```bash
+curl -X POST http://UNRAID-IP:8001/workflows/sync-calendar \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run":false,"days_ahead":92,"mode":"google_authoritative"}'
+```
+
+Optional `two_way` mode uses a persistent fingerprint state file. A Notion-only
+edit is pushed to Google; Google wins if both sides changed since the prior run.
+An unlinked Notion event page in the window creates a Google event. Keep
+`google_authoritative` unless you need those behaviors.
+
+The Notion integration must be shared with the Events database, and the Google
+OAuth token must include `https://www.googleapis.com/auth/calendar`. OAuth token
+refresh writes the token file, so `/config/secrets` cannot be mounted read-only.
 
 ## Sending one email from n8n
 

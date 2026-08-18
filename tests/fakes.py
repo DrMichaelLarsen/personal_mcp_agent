@@ -121,6 +121,17 @@ class FakeNotionClient:
                 output.append(item)
         return output
 
+    def query_database_date_range(self, database_id: str, date_property: str, start: str, end: str):
+        items = self.query_database(database_id)
+        output = []
+        for item in items:
+            value = item["properties"].get(date_property)
+            if isinstance(value, dict):
+                value = value.get("start")
+            if isinstance(value, str) and start <= value[:10] <= end:
+                output.append(item)
+        return output
+
 
 class FakeCalendarClient:
     def __init__(self, events: list[CalendarEvent] | None = None):
@@ -132,6 +143,33 @@ class FakeCalendarClient:
         event = CalendarEvent(id=f"evt-{len(self.events)+1}", **payload_copy)
         self.events.append(event)
         return event
+
+    def update_event(self, calendar_id: str, event_id: str, payload: dict) -> CalendarEvent:
+        for index, event in enumerate(self.events):
+            if event.id != event_id:
+                continue
+            changes = {key: value for key, value in payload.items() if key in CalendarEvent.model_fields}
+            updated = event.model_copy(update=changes)
+            updated.calendar_id = calendar_id
+            self.events[index] = updated
+            return updated
+        raise RuntimeError(f"Event not found: {event_id}")
+
+    def get_calendar_name(self, calendar_id: str) -> str:
+        return calendar_id
+
+    def list_calendars(self) -> list[dict[str, str]]:
+        return [{"id": "primary", "name": "primary"}]
+
+    def list_events(self, calendar_id: str, time_min: str, time_max: str, calendar_name: str | None = None):
+        output = []
+        for event in self.events:
+            if event.start and time_min[:10] <= event.start[:10] <= time_max[:10]:
+                copied = event.model_copy()
+                copied.calendar_id = copied.calendar_id or calendar_id
+                copied.calendar_name = copied.calendar_name or calendar_name or calendar_id
+                output.append(copied)
+        return output
 
     def list_events_for_day(self, calendar_id: str, day: str) -> list[CalendarEvent]:
         return [event for event in self.events if event.start.startswith(day)]

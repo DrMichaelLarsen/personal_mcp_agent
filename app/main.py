@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+from contextlib import suppress
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
@@ -15,10 +17,12 @@ from app.config import get_settings
 from app.logging import configure_logging
 from app.mcp.server import ServiceContainer, build_mcp_server
 from app.schemas.email import EmailMessage, ProcessEmailsInput
+from app.schemas.calendar_sync import CalendarSyncInput
 from app.schemas.notes import ProcessNotesInboxInput
 from app.schemas.planning import DayScheduleBuildInput, ScheduleTaskAtTimeInput
 from app.schemas.tasks import ProcessTaskInboxInput, TaskCreateInput
 from app.services.calendar_service import CalendarService
+from app.services.calendar_sync_service import CalendarSyncService
 from app.services.checklist_service import ChecklistService
 from app.services.cost_service import CostService
 from app.services.email_service import EmailAnalysisService, EmailService
@@ -48,10 +52,15 @@ def _validate_runtime_config() -> None:
         "notes": settings.notes_db.database_id,
     }
     invalid = {name: value for name, value in db_ids.items() if not value or value.startswith("your_")}
-    if invalid:
+    if "events" in invalid and settings.calendar_sync.enabled:
         raise RuntimeError(
-            "Invalid Notion database configuration detected. "
-            f"Update placeholder/empty IDs: {invalid}"
+            "Calendar sync is enabled but the Notion Events database ID is missing or a placeholder. "
+            "Set PPMCP_EVENTS_DB__DATABASE_ID."
+        )
+    if invalid:
+        logger.warning(
+            "Some optional Notion databases are not configured; their features will be unavailable.",
+            extra={"event": "app.config.optional_database_ids_missing", "context": {"databases": sorted(invalid)}},
         )
 
     logger.info(
@@ -89,6 +98,7 @@ task_service = TaskService(notion_client, project_service, matching_service, set
 checklist_service = ChecklistService(notion_client, settings)
 note_service = NoteService(notion_client, project_service, matching_service, settings)
 calendar_service = CalendarService(calendar_client, settings)
+calendar_sync_service = CalendarSyncService(calendar_client, notion_client, settings)
 event_service = EventService(notion_client, settings)
 drive_client = (
     DriveClient(
@@ -114,6 +124,7 @@ container = ServiceContainer(
     checklist_service=checklist_service,
     note_service=note_service,
     calendar_service=calendar_service,
+    calendar_sync_service=calendar_sync_service,
     event_service=event_service,
     email_service=email_service,
     planning_service=planning_service,
@@ -160,6 +171,35 @@ container = ServiceContainer(
 
 mcp_server = build_mcp_server(container)
 app = FastAPI(title=settings.app_name)
+
+
+async def _calendar_sync_loop() -> None:
+    while True:
+        try:
+            result = await asyncio.to_thread(calendar_sync_service.sync, CalendarSyncInput())
+            if result.errors:
+                logger.warning(
+                    "Automatic calendar sync completed with errors.",
+                    extra={"event": "calendar.sync.partial_failure", "context": {"errors": result.errors}},
+                )
+        except Exception:
+            logger.exception("Automatic Google Calendar/Notion sync failed.")
+        await asyncio.sleep(max(1, settings.calendar_sync.interval_minutes) * 60)
+
+
+@app.on_event("startup")
+async def start_calendar_sync_worker() -> None:
+    if settings.calendar_sync.enabled:
+        app.state.calendar_sync_task = asyncio.create_task(_calendar_sync_loop())
+
+
+@app.on_event("shutdown")
+async def stop_calendar_sync_worker() -> None:
+    task = getattr(app.state, "calendar_sync_task", None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 class ProcessSingleEmailRequest(BaseModel):
@@ -212,10 +252,19 @@ async def capabilities() -> dict:
     return {
         "preview_tools": ["preview_tagged_emails", "preview_day_plan", "build_day_schedule(preview_only=true)", "schedule_event(dry_run=true)"],
         "write_tools": ["create_task", "create_project", "create_note", "schedule_task_at_time"],
-        "workflow_tools": ["process_tagged_emails", "plan_day", "build_day_schedule"],
+        "workflow_tools": ["process_tagged_emails", "plan_day", "build_day_schedule", "sync_google_calendar_notion"],
         "llm_provider": llm_selection.provider,
         "llm_tier": settings.llm.quality_tier,
     }
+
+
+@app.post("/workflows/sync-calendar")
+async def sync_calendar(payload: CalendarSyncInput) -> dict:
+    try:
+        result = await asyncio.to_thread(calendar_sync_service.sync, payload)
+        return result.model_dump()
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/resources/system-capabilities")

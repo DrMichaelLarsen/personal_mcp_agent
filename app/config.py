@@ -80,6 +80,32 @@ class CalendarConfig(BaseModel):
     timezone: str = "America/Denver"
 
 
+class CalendarSyncConfig(BaseModel):
+    """Configuration for the Google Calendar <-> Notion Events sync."""
+
+    enabled: bool = False
+    interval_minutes: int = 15
+    lookahead_days: int = 92
+    past_days: int = 0
+    mode: Literal["google_authoritative", "two_way"] = "google_authoritative"
+    calendar_ids: list[str] = Field(default_factory=list)
+    state_path: str = "data/calendar_sync_state.json"
+    notion_link_label: str = "Notion"
+    event_id_property: str = "Event ID"
+    item_link_property: str = "Item Link"
+    calendar_name_property: str = "Calendar Name"
+    source_property: str = "Source"
+    sync_status_property: str = "Sync Status"
+    event_status_property: str = "Event Status"
+    freebusy_property: str = "Freebusy"
+    attendees_property: str = "Attendees"
+    organizer_property: str = "Organizer"
+    visibility_property: str = "Visibility"
+    conference_link_property: str = "Conference Call Link"
+    automation_name_property: str = "Automation Name"
+    labels_property: str = "Labels"
+
+
 class AttachmentConfig(BaseModel):
     mode: Literal["none", "drive_link", "notion_file"] = "none"
     max_attachments_per_email: int = 10
@@ -152,6 +178,7 @@ class Settings(BaseSettings):
     notion_api_key: str | None = None
     gmail: GmailConfig = Field(default_factory=GmailConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    calendar_sync: CalendarSyncConfig = Field(default_factory=CalendarSyncConfig)
     attachments: AttachmentConfig = Field(default_factory=AttachmentConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     project_routing: ProjectRoutingConfig = Field(default_factory=ProjectRoutingConfig)
