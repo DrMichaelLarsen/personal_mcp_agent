@@ -158,10 +158,13 @@ PPMCP_CALENDAR_SYNC__INTERVAL_MINUTES=15
 PPMCP_CALENDAR_SYNC__LOOKAHEAD_DAYS=92
 PPMCP_CALENDAR_SYNC__MODE=google_authoritative
 PPMCP_CALENDAR_SYNC__CALENDAR_IDS=["primary"]
+PPMCP_CALENDAR_SYNC__EDITABLE_CALENDARS_ONLY=true
 PPMCP_CALENDAR_SYNC__STATE_PATH=/data/calendar_sync_state.json
 ```
 
-For all visible calendars, use `PPMCP_CALENDAR_SYNC__CALENDAR_IDS=["*"]`.
+For all editable calendars, use `PPMCP_CALENDAR_SYNC__CALENDAR_IDS=["*"]`.
+With `PPMCP_CALENDAR_SYNC__EDITABLE_CALENDARS_ONLY=true`, calendars where your
+Google account is only a reader or free/busy reader are skipped.
 For a controlled subset, use the exact Google calendar IDs in the JSON list.
 
 Run a safe preview before enabling automatic writes:

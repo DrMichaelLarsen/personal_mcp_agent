@@ -133,3 +133,32 @@ def test_two_way_mode_creates_google_event_for_unlinked_notion_page(tmp_path):
     assert calendar.events[0].end == "2026-08-25"
     assert page["url"] in calendar.events[0].description
     assert notion.pages[page["id"]]["properties"]["Event ID"] == calendar.events[0].id
+
+
+def test_all_calendars_mode_skips_read_only_calendars(tmp_path):
+    settings = make_settings(tmp_path)
+    settings.calendar_sync.calendar_ids = ["*"]
+
+    class AccessAwareCalendar(FakeCalendarClient):
+        def __init__(self):
+            super().__init__()
+            self.queried: list[str] = []
+
+        def list_calendars(self):
+            return [
+                {"id": "owned", "name": "Owned", "access_role": "owner"},
+                {"id": "shared-write", "name": "Shared write", "access_role": "writer"},
+                {"id": "read-only", "name": "Read only", "access_role": "reader"},
+                {"id": "free-busy", "name": "Free/busy", "access_role": "freeBusyReader"},
+            ]
+
+        def list_events(self, calendar_id, time_min, time_max, calendar_name=None):
+            self.queried.append(calendar_id)
+            return []
+
+    calendar = AccessAwareCalendar()
+    CalendarSyncService(calendar, FakeNotionClient(), settings).sync(
+        CalendarSyncInput(start="2026-08-17", end="2026-11-17")
+    )
+
+    assert calendar.queried == ["owned", "shared-write"]

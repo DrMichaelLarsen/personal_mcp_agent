@@ -159,7 +159,7 @@ class FakeCalendarClient:
         return calendar_id
 
     def list_calendars(self) -> list[dict[str, str]]:
-        return [{"id": "primary", "name": "primary"}]
+        return [{"id": "primary", "name": "primary", "access_role": "owner"}]
 
     def list_events(self, calendar_id: str, time_min: str, time_max: str, calendar_name: str | None = None):
         output = []

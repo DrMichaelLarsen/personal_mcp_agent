@@ -158,7 +158,13 @@ class CalendarClient:
             response = service.calendarList().list(pageToken=page_token).execute()
             for item in response.get("items", []):
                 if item.get("id"):
-                    results.append({"id": item["id"], "name": item.get("summaryOverride") or item.get("summary") or item["id"]})
+                    results.append(
+                        {
+                            "id": item["id"],
+                            "name": item.get("summaryOverride") or item.get("summary") or item["id"],
+                            "access_role": item.get("accessRole") or "reader",
+                        }
+                    )
             page_token = response.get("nextPageToken")
             if not page_token:
                 return results

@@ -145,8 +145,10 @@ class CalendarSyncService:
         ids = requested or self.settings.calendar_sync.calendar_ids or [self.settings.calendar.calendar_id]
         if "*" in ids:
             rows = self.calendar.list_calendars()
+            if self.settings.calendar_sync.editable_calendars_only:
+                rows = [row for row in rows if row.get("access_role") in {"owner", "writer"}]
             if not rows:
-                raise RuntimeError("Google Calendar returned no visible calendars.")
+                raise RuntimeError("Google Calendar returned no editable calendars.")
             return [(row["id"], row.get("name") or row["id"]) for row in rows]
         return [(calendar_id, self.calendar.get_calendar_name(calendar_id)) for calendar_id in ids]
 

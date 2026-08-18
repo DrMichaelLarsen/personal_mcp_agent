@@ -89,6 +89,7 @@ class CalendarSyncConfig(BaseModel):
     past_days: int = 0
     mode: Literal["google_authoritative", "two_way"] = "google_authoritative"
     calendar_ids: list[str] = Field(default_factory=list)
+    editable_calendars_only: bool = True
     state_path: str = "data/calendar_sync_state.json"
     notion_link_label: str = "Notion"
     event_id_property: str = "Event ID"
